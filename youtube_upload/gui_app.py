@@ -6,7 +6,14 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from . import main as cli_main
+# Allow running both as module (-m youtube_upload.gui_app) and as script
+try:
+    from . import main as cli_main
+except ImportError:
+    SCRIPT_DIR = Path(__file__).resolve().parent
+    PARENT = SCRIPT_DIR.parent
+    sys.path.insert(0, str(PARENT))
+    import youtube_upload.main as cli_main
 
 
 class UploadGUI:
@@ -131,12 +138,13 @@ class UploadGUI:
 
     def _upload(self):
         title = self.title_var.get().strip()
-        if not title:
-            messagebox.showerror("Missing title", "Title is required.")
-            return
         if not self.video_paths:
             messagebox.showerror("Missing videos", "Please select at least one video file.")
             return
+        # Default title from the first video filename if none provided
+        if not title:
+            title = cli_main.default_title_from_video_path(self.video_paths[0])
+            self.title_var.set(title)
 
         description = self.description_text.get("1.0", "end").strip()
         args = ["--title", title]
