@@ -65,27 +65,37 @@ class UploadGUI:
         self.publish_at_var = tk.StringVar()
         ttk.Entry(frame, textvariable=self.publish_at_var).grid(row=6, column=1, sticky="ew")
 
+        # Skip if exists
+        ttk.Label(frame, text="Skip if exists").grid(row=7, column=0, sticky="w")
+        self.skip_if_exists_var = tk.StringVar(value="hash")
+        ttk.Combobox(
+            frame,
+            textvariable=self.skip_if_exists_var,
+            values=["none", "title", "hash"],
+            state="readonly",
+        ).grid(row=7, column=1, sticky="w")
+
         # Thumbnail
         thumb_frame = ttk.Frame(frame)
-        thumb_frame.grid(row=7, column=1, sticky="w")
+        thumb_frame.grid(row=8, column=1, sticky="w")
         ttk.Button(thumb_frame, text="Choose Thumbnail", command=self._choose_thumbnail).grid(row=0, column=0, sticky="w")
         self.thumb_label = ttk.Label(thumb_frame, text="No file selected")
         self.thumb_label.grid(row=0, column=1, sticky="w", padx=6)
-        ttk.Label(frame, text="Thumbnail").grid(row=7, column=0, sticky="w")
+        ttk.Label(frame, text="Thumbnail").grid(row=8, column=0, sticky="w")
 
         # Client secrets (optional)
-        ttk.Label(frame, text="Client secrets (optional)").grid(row=8, column=0, sticky="w")
+        ttk.Label(frame, text="Client secrets (optional)").grid(row=9, column=0, sticky="w")
         secrets_frame = ttk.Frame(frame)
-        secrets_frame.grid(row=8, column=1, sticky="ew")
+        secrets_frame.grid(row=9, column=1, sticky="ew")
         self.secrets_var = tk.StringVar()
         ttk.Entry(secrets_frame, textvariable=self.secrets_var).grid(row=0, column=0, sticky="ew")
         ttk.Button(secrets_frame, text="Browse", command=self._choose_client_secrets).grid(row=0, column=1, padx=6)
         secrets_frame.columnconfigure(0, weight=1)
 
         # Credentials (optional)
-        ttk.Label(frame, text="Credentials file (optional)").grid(row=9, column=0, sticky="w")
+        ttk.Label(frame, text="Credentials file (optional)").grid(row=10, column=0, sticky="w")
         creds_frame = ttk.Frame(frame)
-        creds_frame.grid(row=9, column=1, sticky="ew")
+        creds_frame.grid(row=10, column=1, sticky="ew")
         self.credentials_var = tk.StringVar()
         ttk.Entry(creds_frame, textvariable=self.credentials_var).grid(row=0, column=0, sticky="ew")
         ttk.Button(creds_frame, text="Browse", command=self._choose_credentials).grid(row=0, column=1, padx=6)
@@ -95,21 +105,21 @@ class UploadGUI:
         # Default to console-based auth to avoid missing Qt/PySide dependencies
         self.auth_browser_var = tk.BooleanVar(value=False)
         self.open_link_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(frame, text="Authenticate with browser (GUI)", variable=self.auth_browser_var).grid(row=10, column=1, sticky="w")
-        ttk.Checkbutton(frame, text="Open uploaded video link after upload", variable=self.open_link_var).grid(row=11, column=1, sticky="w")
+        ttk.Checkbutton(frame, text="Authenticate with browser (GUI)", variable=self.auth_browser_var).grid(row=11, column=1, sticky="w")
+        ttk.Checkbutton(frame, text="Open uploaded video link after upload", variable=self.open_link_var).grid(row=12, column=1, sticky="w")
 
         # Video selector
         videos_frame = ttk.Frame(frame)
-        videos_frame.grid(row=12, column=1, sticky="w")
+        videos_frame.grid(row=13, column=1, sticky="w")
         ttk.Button(videos_frame, text="Choose Video(s)", command=self._choose_videos).grid(row=0, column=0, sticky="w")
         self.videos_label = ttk.Label(videos_frame, text="No videos selected")
         self.videos_label.grid(row=0, column=1, padx=6, sticky="w")
-        ttk.Label(frame, text="Videos*").grid(row=12, column=0, sticky="w")
+        ttk.Label(frame, text="Videos*").grid(row=13, column=0, sticky="w")
 
         # Upload button
-        ttk.Button(frame, text="Upload", command=self._upload).grid(row=13, column=1, sticky="e", pady=8)
+        ttk.Button(frame, text="Upload", command=self._upload).grid(row=14, column=1, sticky="e", pady=8)
 
-        for i in range(0, 14):
+        for i in range(0, 15):
             frame.rowconfigure(i, pad=4)
         frame.columnconfigure(1, weight=1)
 
@@ -176,6 +186,9 @@ class UploadGUI:
             args.append("--auth-browser")
         if self.open_link_var.get():
             args.append("--open-link")
+        skip_if_exists = self.skip_if_exists_var.get().strip()
+        if skip_if_exists and skip_if_exists != "none":
+            args += ["--skip-if-exists", skip_if_exists]
 
         full_args = args + self.video_paths
 

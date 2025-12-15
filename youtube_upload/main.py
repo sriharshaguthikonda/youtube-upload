@@ -21,6 +21,7 @@ import re
 import optparse
 import collections
 import webbrowser
+import hashlib
 from pathlib import Path
 from io import open
 
@@ -132,6 +133,45 @@ def default_title_from_video_path(video_path):
     return sanitize_title(Path(video_path).stem)
 
 
+def _compute_file_hash(path, chunk_size=1024 * 1024):
+    """Return a SHA-256 hex digest for the given file path."""
+    h = hashlib.sha256()
+    with open(path, "rb") as handle:
+        chunk = handle.read(chunk_size)
+        while chunk:
+            h.update(chunk)
+            chunk = handle.read(chunk_size)
+    return h.hexdigest()
+
+
+def _build_hash_tag(path, prefix="hash:"):
+    return f"{prefix}{_compute_file_hash(path)}"
+
+
+def _find_existing_video(youtube, title=None, hash_tag=None, max_results=5):
+    """Return a videoId if a matching video exists on the channel."""
+    query = hash_tag or title
+    if not query:
+        return None
+    request = youtube.search().list(
+        part="id,snippet",
+        q=query,
+        type="video",
+        forMine=True,
+        maxResults=max_results,
+    )
+    results = request.execute().get("items", [])
+    for item in results:
+        video_id = item.get("id", {}).get("videoId")
+        snippet = item.get("snippet", {}) or {}
+        if hash_tag:
+            # Hash search already acts as the match
+            return video_id
+        if title and snippet.get("title", "").strip().lower() == title.strip().lower():
+            return video_id
+    return None
+
+
 def upload_youtube_video(youtube, options, video_path, total_videos, index):
     """Upload video with index (for split videos)."""
     u = lib.to_utf8
@@ -150,6 +190,23 @@ def upload_youtube_video(youtube, options, video_path, total_videos, index):
     complete_title = (title_template.format(**ns) if total_videos > 1 else title)
     progress = get_progress_info()
     category_id = get_category_id(options.category)
+
+    hash_tag = None
+    if options.skip_if_exists == "hash":
+        hash_tag = _build_hash_tag(video_path)
+        if hash_tag not in tags:
+            tags.append(hash_tag)
+
+    if options.skip_if_exists:
+        existing_video_id = _find_existing_video(
+            youtube,
+            title=complete_title if options.skip_if_exists == "title" else None,
+            hash_tag=hash_tag if options.skip_if_exists == "hash" else None,
+        )
+        if existing_video_id:
+            debug("Skipping upload; video already exists: {0}".format(existing_video_id))
+            return existing_video_id
+
     request_body = {
         "snippet": {
             "title": complete_title,
@@ -298,6 +355,9 @@ def main(arguments):
                       help='Template for multiple videos (default: {title} [{n}/{total}])')
     parser.add_option('', '--embeddable', dest='embeddable', default=True,
                       help='Video is embeddable')
+    parser.add_option('', '--skip-if-exists', dest='skip_if_exists',
+                      choices=('title', 'hash'), default=None,
+                      help='Skip upload if a video exists with matching title or content hash')
 
     # Authentication
     parser.add_option('', '--client-secrets', dest='client_secrets',
