@@ -60,6 +60,7 @@ target/
 
 # Local Google API credentials
 client_secrets.json
+youtube_upload/.youtube-upload-credentials.json
 
 # Editor workspace files
 *.code-workspace
