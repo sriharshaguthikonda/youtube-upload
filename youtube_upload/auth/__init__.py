@@ -9,7 +9,11 @@ from youtube_upload.auth import console
 from oauth2client import client
 from oauth2client import file
 
-YOUTUBE_UPLOAD_SCOPE = ["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube"]
+YOUTUBE_UPLOAD_SCOPE = [
+    "https://www.googleapis.com/auth/youtube.upload",
+    "https://www.googleapis.com/auth/youtube",
+    "https://www.googleapis.com/auth/youtube.readonly",
+]
 
 
 def _get_credentials_interactively(flow, storage, get_code_callback):
