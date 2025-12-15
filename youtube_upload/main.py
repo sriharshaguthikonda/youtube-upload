@@ -17,9 +17,11 @@ Upload a video to Youtube from the command-line.
 
 import os
 import sys
+import re
 import optparse
 import collections
 import webbrowser
+from pathlib import Path
 from io import open
 
 import googleapiclient.errors
@@ -116,10 +118,25 @@ def get_category_id(category):
             raise InvalidCategory(msg)
 
 
+def sanitize_title(title):
+    """Sanitize a title to keep it YouTube-friendly and within limits."""
+    cleaned = "".join(ch for ch in title if ch.isprintable() and ch not in ("\n", "\r", "\t"))
+    cleaned = cleaned.replace("_", " ").replace("-", " ")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    # YouTube titles are limited to 100 characters
+    return cleaned[:100] or "Untitled"
+
+
+def default_title_from_video_path(video_path):
+    """Derive a safe default title from a video path."""
+    return sanitize_title(Path(video_path).stem)
+
+
 def upload_youtube_video(youtube, options, video_path, total_videos, index):
     """Upload video with index (for split videos)."""
     u = lib.to_utf8
-    title = u(options.title)
+    base_title = options.title or default_title_from_video_path(video_path)
+    title = u(base_title)
     if hasattr(u('string'), 'decode'):
         description = u(options.description or "").decode("string-escape")
     else:
@@ -182,7 +199,7 @@ def get_youtube_handler(options):
 
 def parse_options_error(parser, options):
     """Check errors in options."""
-    required_options = ["title"]
+    required_options = []
     missing = [opt for opt in required_options if not getattr(options, opt)]
     if missing:
         parser.print_usage()
