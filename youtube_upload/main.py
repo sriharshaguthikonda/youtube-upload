@@ -185,12 +185,35 @@ def upload_youtube_video(youtube, options, video_path, total_videos, index):
 
 def get_youtube_handler(options):
     """Return the API Youtube object."""
-    home = os.path.expanduser("~")
-    default_credentials = os.path.join(home, ".youtube-upload-credentials.json")
-    client_secrets = options.client_secrets or os.path.join(home, ".client_secrets.json")
-    credentials = options.credentials_file or default_credentials
+    pkg_dir = Path(__file__).resolve().parent
+    repo_dir = pkg_dir.parent
+
+    client_secrets = options.client_secrets
+    if not client_secrets:
+        # Prefer a file alongside this module, then fall back to repo root
+        pkg_default = pkg_dir / "client_secrets.json"
+        repo_default = repo_dir / "client_secrets.json"
+        if pkg_default.exists():
+            client_secrets = pkg_default
+        else:
+            client_secrets = repo_default
+
+    credentials = options.credentials_file
+    if not credentials:
+        # Keep credentials near the code for consistency
+        credentials = pkg_dir / ".youtube-upload-credentials.json"
+
+    client_secrets = str(client_secrets)
+    credentials = str(credentials)
+
     debug("Using client secrets: {0}".format(client_secrets))
     debug("Using credentials file: {0}".format(credentials))
+    if not os.path.exists(client_secrets):
+        raise OptionsError(
+            "client_secrets.json not found. Tried: {0}. "
+            "Place it next to youtube_upload/main.py or in the repo root, "
+            "or pass --client-secrets.".format(client_secrets)
+        )
     get_code_callback = (auth.browser.get_code
                          if options.auth_browser else auth.console.get_code)
     return auth.get_resource(client_secrets, credentials,

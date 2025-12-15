@@ -6,14 +6,12 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-# Allow running both as module (-m youtube_upload.gui_app) and as script
-try:
-    from . import main as cli_main
-except ImportError:
-    SCRIPT_DIR = Path(__file__).resolve().parent
-    PARENT = SCRIPT_DIR.parent
+# Ensure local package has priority whether run as module or script
+SCRIPT_DIR = Path(__file__).resolve().parent
+PARENT = SCRIPT_DIR.parent
+if str(PARENT) not in sys.path:
     sys.path.insert(0, str(PARENT))
-    import youtube_upload.main as cli_main
+import youtube_upload.main as cli_main
 
 
 class UploadGUI:
@@ -94,7 +92,8 @@ class UploadGUI:
         creds_frame.columnconfigure(0, weight=1)
 
         # Checkboxes
-        self.auth_browser_var = tk.BooleanVar(value=True)
+        # Default to console-based auth to avoid missing Qt/PySide dependencies
+        self.auth_browser_var = tk.BooleanVar(value=False)
         self.open_link_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(frame, text="Authenticate with browser (GUI)", variable=self.auth_browser_var).grid(row=10, column=1, sticky="w")
         ttk.Checkbutton(frame, text="Open uploaded video link after upload", variable=self.open_link_var).grid(row=11, column=1, sticky="w")
