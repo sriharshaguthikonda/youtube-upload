@@ -159,6 +159,33 @@ def _build_hash_tag(path, prefix="hash:"):
     return f"{prefix}{_compute_file_hash(path)}"
 
 
+def _validate_mp4_content(video_path, min_bytes=1024):
+    """Ensure an .mp4 file has plausible MP4 structure and non-trivial size."""
+    path = Path(video_path)
+    if not path.exists():
+        raise OptionsError(f"Video file not found: {video_path}")
+    if not path.is_file():
+        raise OptionsError(f"Video path is not a file: {video_path}")
+    try:
+        size = path.stat().st_size
+    except OSError:
+        raise OptionsError(f"Cannot access video file: {video_path}")
+    if size < min_bytes:
+        raise OptionsError(f"Video file appears too small to contain MP4 content: {video_path}")
+
+    try:
+        with open(path, "rb") as handle:
+            header = handle.read(12)
+    except OSError:
+        raise OptionsError(f"Cannot read video file: {video_path}")
+
+    # MP4 files typically start with a box size (4 bytes) followed by 'ftyp'
+    if len(header) < 8 or header[4:8] != b"ftyp":
+        raise OptionsError(f"{video_path} does not look like a valid MP4 (missing ftyp box).")
+
+    return True
+
+
 def _find_existing_video(youtube, title=None, hash_tag=None, max_results=5):
     """Return a videoId if a matching video exists on the channel."""
     query = hash_tag or title
@@ -336,6 +363,9 @@ def parse_options_error(parser, options):
 def run_main(parser, options, args, output=sys.stdout):
     """Run the main scripts from the parsed options/args."""
     parse_options_error(parser, options)
+    for video_path in args:
+        if Path(video_path).suffix.lower() == ".mp4":
+            _validate_mp4_content(video_path)
     account_labels = []
     if options.accounts:
         account_labels = [label.strip() for label in options.accounts.split(",") if label.strip()]
