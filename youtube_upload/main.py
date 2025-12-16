@@ -225,7 +225,6 @@ def create_internet_shortcut(video_path, video_url):
     """Create a .url internet shortcut next to the uploaded video file."""
     path = Path(video_path)
     shortcut_path = path.parent / (path.name + ".url")
-    
     shortcut_path_no_url = path.parent / (path.name + ".m3u")
     
     log_debug("Creating shortcut: video_path={0}, shortcut_path={1}".format(video_path, shortcut_path))
