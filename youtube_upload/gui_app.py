@@ -252,13 +252,13 @@ class UploadGUI:
         if not self.video_paths:
             messagebox.showerror("Missing videos", "Please select at least one video file.")
             return
-        # Default title from the first video filename if none provided
-        if not title:
-            title = cli_main.default_title_from_video_path(self.video_paths[0])
-            self.title_var.set(title)
 
         description = self.description_text.get("1.0", "end").strip()
-        args = ["--title", title]
+        args = []
+        # Only pass an explicit title if the user provided one; otherwise let the CLI
+        # derive a per-file title from each video path.
+        if title:
+            args += ["--title", title]
 
         if description:
             args += ["--description", description]
@@ -268,6 +268,11 @@ class UploadGUI:
             args += ["--category", self.category_var.get().strip()]
         if self.playlist_var.get().strip():
             args += ["--playlist", self.playlist_var.get().strip()]
+
+        # Avoid auto-appending counters like "[2/15]" when uploading multiple files.
+        # If the user wants a custom template they can still set it via CLI manually.
+        if len(self.video_paths) > 1:
+            args += ["--title-template", "{title}"]
 
         privacy = self.privacy_var.get().strip()
         if privacy and privacy != "public":
