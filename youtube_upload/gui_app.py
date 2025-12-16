@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 """Simple Tkinter GUI wrapper around the existing youtube-upload CLI."""
 
+import json
 import sys
 import tkinter as tk
 from pathlib import Path
@@ -23,6 +24,8 @@ class UploadGUI:
         self.thumbnail_path = None
 
         self._build_form()
+        self._load_settings()
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_form(self):
         frame = ttk.Frame(self.root, padding=12)
@@ -140,6 +143,79 @@ class UploadGUI:
         for i in range(0, 18):
             frame.rowconfigure(i, pad=4)
         frame.columnconfigure(1, weight=1)
+
+    @property
+    def _settings_path(self):
+        return Path.home() / ".youtube_upload_gui_settings.json"
+
+    def _load_settings(self):
+        try:
+            data = json.loads(self._settings_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return
+        except Exception:
+            # Ignore malformed settings to avoid blocking startup
+            return
+
+        self.title_var.set(data.get("title", ""))
+        self.tags_var.set(data.get("tags", ""))
+        self.category_var.set(data.get("category", ""))
+        self.playlist_var.set(data.get("playlist", ""))
+        self.privacy_var.set(data.get("privacy", "public"))
+        self.publish_at_var.set(data.get("publish_at", ""))
+        self.skip_if_exists_var.set(data.get("skip_if_exists", "hash"))
+        self.secrets_var.set(data.get("secrets_path", ""))
+        self.credentials_var.set(data.get("credentials_path", ""))
+        self.account_var.set(data.get("account", ""))
+        self.accounts_var.set(data.get("accounts", ""))
+        self.accounts_dir_var.set(data.get("accounts_dir", ""))
+        self.auth_browser_var.set(bool(data.get("auth_browser", False)))
+        self.open_link_var.set(bool(data.get("open_link", False)))
+
+        description = data.get("description", "")
+        if description:
+            self.description_text.delete("1.0", "end")
+            self.description_text.insert("1.0", description)
+
+        thumb = data.get("thumbnail_path")
+        if thumb:
+            self.thumbnail_path = thumb
+            self.thumb_label.config(text=Path(thumb).name)
+
+        videos = data.get("video_paths") or []
+        if videos:
+            self.video_paths = videos
+            self.videos_label.config(text=f"{len(self.video_paths)} file(s) selected")
+
+    def _save_settings(self):
+        data = {
+            "title": self.title_var.get(),
+            "description": self.description_text.get("1.0", "end").strip(),
+            "tags": self.tags_var.get(),
+            "category": self.category_var.get(),
+            "playlist": self.playlist_var.get(),
+            "privacy": self.privacy_var.get(),
+            "publish_at": self.publish_at_var.get(),
+            "skip_if_exists": self.skip_if_exists_var.get(),
+            "secrets_path": self.secrets_var.get(),
+            "credentials_path": self.credentials_var.get(),
+            "account": self.account_var.get(),
+            "accounts": self.accounts_var.get(),
+            "accounts_dir": self.accounts_dir_var.get(),
+            "auth_browser": bool(self.auth_browser_var.get()),
+            "open_link": bool(self.open_link_var.get()),
+            "thumbnail_path": self.thumbnail_path,
+            "video_paths": self.video_paths,
+        }
+        try:
+            self._settings_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except Exception:
+            # Failing to save settings should not crash the app
+            pass
+
+    def _on_close(self):
+        self._save_settings()
+        self.root.destroy()
 
     def _choose_videos(self):
         paths = filedialog.askopenfilenames(title="Select video files")
