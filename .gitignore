@@ -68,4 +68,4 @@ youtube_upload/.youtube-upload-credentials.json
 # YouTube upload credentials
 youtube_upload/*/.youtube-upload-credentials.json
 *.youtube-upload-credentials.json
-youtube_upload/*/.default.json
+youtube_upload/*/default.json
