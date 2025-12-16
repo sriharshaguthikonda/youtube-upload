@@ -64,3 +64,8 @@ youtube_upload/.youtube-upload-credentials.json
 
 # Editor workspace files
 *.code-workspaceyoutube_upload/General_account/.youtube-upload-credentials.json
+
+# YouTube upload credentials
+youtube_upload/General_account/.youtube-upload-credentials.json
+youtube_upload/*/.youtube-upload-credentials.json
+*.youtube-upload-credentials.json
