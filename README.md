@@ -76,6 +76,28 @@ The package used to include a default ```client_secrets.json``` file. It does no
 Examples
 ========
 
+GUI app (Tkinter)
+-----------------
+
+You can use the bundled GUI instead of the CLI:
+
+```
+$ python youtube_upload/gui_app.py
+```
+
+Key fields:
+
+* **Title** (required) and optional Description, Tags, Category, Playlist, Privacy, Publish at, Thumbnail.
+* **Client secrets**: leave blank to auto-resolve; when an accounts directory is chosen it will look for `client_secrets.json` there first.
+* **Credentials file**: optional explicit path. If blank, it is derived from account settings.
+* **Account label**: isolates credentials per label (stored as `<accounts-dir>/<label>.json`).
+* **Accounts (comma separated)**: upload the selected videos to multiple profiles in one run.
+* **Accounts dir**: root folder for per-account credentials; defaults to `~/.youtube-upload-accounts` when an account is specified.
+* **Authenticate with browser (GUI)**: uses browser-based OAuth; leave unchecked to use console flow.
+* **Open uploaded video link after upload**: opens each uploaded video URL in your browser.
+
+Add videos with **Choose Video(s)** and click **Upload**.
+
 * Upload a video (a valid `~/.client_secrets.json` should exist, check the Setup section):
 
 ```
