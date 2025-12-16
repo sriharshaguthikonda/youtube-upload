@@ -132,12 +132,15 @@ class UploadGUI:
         ttk.Checkbutton(frame, text="Enable debug logging", variable=self.debug_var).grid(row=16, column=1, sticky="w")
 
         # Video selector
+        ttk.Label(frame, text="Choose Video(s)*").grid(row=17, column=0, sticky="w")
         videos_frame = ttk.Frame(frame)
-        videos_frame.grid(row=17, column=1, sticky="w")
-        ttk.Button(videos_frame, text="Choose Video(s)", command=self._choose_videos).grid(row=0, column=0, sticky="w")
+        videos_frame.grid(row=17, column=1, sticky="ew")
+        self.video_path_var = tk.StringVar()
+        ttk.Entry(videos_frame, textvariable=self.video_path_var, width=40).grid(row=0, column=0, sticky="ew")
+        ttk.Button(videos_frame, text="Browse", command=self._choose_videos).grid(row=0, column=1, padx=6)
         self.videos_label = ttk.Label(videos_frame, text="No videos selected")
-        self.videos_label.grid(row=0, column=1, padx=6, sticky="w")
-        ttk.Label(frame, text="Videos*").grid(row=17, column=0, sticky="w")
+        self.videos_label.grid(row=0, column=2, padx=6, sticky="w")
+        videos_frame.columnconfigure(0, weight=1)
 
         # Upload button
         ttk.Button(frame, text="Upload", command=self._upload).grid(row=18, column=1, sticky="e", pady=8)
@@ -159,10 +162,7 @@ class UploadGUI:
             # Ignore malformed settings to avoid blocking startup
             return
 
-        self.title_var.set(data.get("title", ""))
-        self.tags_var.set(data.get("tags", ""))
         self.category_var.set(data.get("category", ""))
-        self.playlist_var.set(data.get("playlist", ""))
         self.privacy_var.set(data.get("privacy", "public"))
         self.publish_at_var.set(data.get("publish_at", ""))
         self.skip_if_exists_var.set(data.get("skip_if_exists", "hash"))
@@ -188,15 +188,13 @@ class UploadGUI:
         videos = data.get("video_paths") or []
         if videos:
             self.video_paths = videos
+            self.video_path_var.set("; ".join(self.video_paths))
             self.videos_label.config(text=f"{len(self.video_paths)} file(s) selected")
 
     def _save_settings(self):
         data = {
-            "title": self.title_var.get(),
-            "description": self.description_text.get("1.0", "end").strip(),
-            "tags": self.tags_var.get(),
             "category": self.category_var.get(),
-            "playlist": self.playlist_var.get(),
+
             "privacy": self.privacy_var.get(),
             "publish_at": self.publish_at_var.get(),
             "skip_if_exists": self.skip_if_exists_var.get(),
@@ -209,7 +207,8 @@ class UploadGUI:
             "open_link": bool(self.open_link_var.get()),
             "debug": bool(self.debug_var.get()),
             "thumbnail_path": self.thumbnail_path,
-            "video_paths": self.video_paths,
+            "video_paths": self.video_paths if self.video_paths else [],
+
         }
         try:
             self._settings_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
