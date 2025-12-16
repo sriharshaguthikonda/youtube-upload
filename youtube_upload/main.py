@@ -148,6 +148,22 @@ def _build_hash_tag(path, prefix="hash:"):
     return f"{prefix}{_compute_file_hash(path)}"
 
 
+def _verify_uploaded_hash(youtube, video_id, hash_tag):
+    """Confirm uploaded video contains the expected hash tag."""
+    if not hash_tag:
+        return True
+    response = youtube.videos().list(part="snippet", id=video_id).execute()
+    items = response.get("items", [])
+    if not items:
+        raise RequestError(f"Verification failed: video {video_id} not found.")
+    snippet = items[0].get("snippet", {}) or {}
+    tags = snippet.get("tags") or []
+    description = snippet.get("description") or ""
+    if hash_tag in tags or hash_tag in description:
+        return True
+    raise RequestError(f"Verification failed: hash tag {hash_tag} missing from video {video_id}.")
+
+
 def _find_existing_video(youtube, title=None, hash_tag=None, max_results=5):
     """Return a videoId if a matching video exists on the channel."""
     query = hash_tag or title
@@ -196,6 +212,11 @@ def upload_youtube_video(youtube, options, video_path, total_videos, index):
         hash_tag = _build_hash_tag(video_path)
         if hash_tag not in tags:
             tags.append(hash_tag)
+        # Also embed the hash in description to survive potential tag drops
+        desc_suffix = f"\n{hash_tag}"
+        description = description or ""
+        if hash_tag not in description:
+            description = (description + desc_suffix) if description else hash_tag
 
     if options.skip_if_exists:
         existing_video_id = _find_existing_video(
@@ -237,6 +258,8 @@ def upload_youtube_video(youtube, options, video_path, total_videos, index):
                                        chunksize=options.chunksize)
     finally:
         progress.finish()
+    if hash_tag:
+        _verify_uploaded_hash(youtube, video_id, hash_tag)
     return video_id
 
 
