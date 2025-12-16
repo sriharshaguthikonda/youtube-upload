@@ -244,21 +244,39 @@ def get_youtube_handler(options):
     """Return the API Youtube object."""
     pkg_dir = Path(__file__).resolve().parent
     repo_dir = pkg_dir.parent
+    accounts_dir = None
+    use_accounts_dir = bool(options.account) or bool(options.accounts_dir)
+    if use_accounts_dir:
+        accounts_dir = (Path(options.accounts_dir)
+                        if options.accounts_dir
+                        else Path.home() / ".youtube-upload-accounts")
 
     client_secrets = options.client_secrets
     if not client_secrets:
-        # Prefer a file alongside this module, then fall back to repo root
-        pkg_default = pkg_dir / "client_secrets.json"
-        repo_default = repo_dir / "client_secrets.json"
-        if pkg_default.exists():
-            client_secrets = pkg_default
-        else:
-            client_secrets = repo_default
+        # Prefer account directory secrets when an accounts dir is used
+        if accounts_dir:
+            account_client_secrets = accounts_dir / "client_secrets.json"
+            if account_client_secrets.exists():
+                client_secrets = account_client_secrets
+        # Fall back to module-local or repo root defaults
+        if not client_secrets:
+            pkg_default = pkg_dir / "client_secrets.json"
+            repo_default = repo_dir / "client_secrets.json"
+            if pkg_default.exists():
+                client_secrets = pkg_default
+            else:
+                client_secrets = repo_default
 
     credentials = options.credentials_file
     if not credentials:
-        # Keep credentials near the code for consistency
-        credentials = pkg_dir / ".youtube-upload-credentials.json"
+        if use_accounts_dir:
+            accounts_dir.mkdir(parents=True, exist_ok=True)
+            account_label = options.account or "default"
+            credentials = accounts_dir / f"{account_label}.json"
+            debug("Using account profile: {0}".format(account_label))
+        else:
+            # Keep credentials near the code for consistency (legacy default)
+            credentials = pkg_dir / ".youtube-upload-credentials.json"
 
     client_secrets = str(client_secrets)
     credentials = str(credentials)
@@ -290,24 +308,36 @@ def parse_options_error(parser, options):
 def run_main(parser, options, args, output=sys.stdout):
     """Run the main scripts from the parsed options/args."""
     parse_options_error(parser, options)
-    youtube = get_youtube_handler(options)
-
-    if youtube:
-        for index, video_path in enumerate(args):
-            video_id = upload_youtube_video(youtube, options, video_path, len(args), index)
-            video_url = WATCH_VIDEO_URL.format(id=video_id)
-            debug("Video URL: {0}".format(video_url))
-            if options.open_link:
-                open_link(video_url)  # Opens the Youtube Video's link in a webbrowser
-
-            if options.thumb:
-                youtube.thumbnails().set(videoId=video_id, media_body=options.thumb).execute()
-            if options.playlist:
-                playlists.add_video_to_playlist(youtube, video_id,
-                                                title=lib.to_utf8(options.playlist), privacy=options.privacy)
-            output.write(video_id + "\n")
+    account_labels = []
+    if options.accounts:
+        account_labels = [label.strip() for label in options.accounts.split(",") if label.strip()]
+    elif options.account:
+        account_labels = [options.account]
     else:
-        raise AuthenticationError("Cannot get youtube resource")
+        account_labels = [None]
+
+    for account_label in account_labels:
+        if account_label:
+            debug("Starting uploads for account: {0}".format(account_label))
+            options.account = account_label  # Ensure downstream uses this label
+        youtube = get_youtube_handler(options)
+
+        if youtube:
+            for index, video_path in enumerate(args):
+                video_id = upload_youtube_video(youtube, options, video_path, len(args), index)
+                video_url = WATCH_VIDEO_URL.format(id=video_id)
+                debug("Video URL: {0}".format(video_url))
+                if options.open_link:
+                    open_link(video_url)  # Opens the Youtube Video's link in a webbrowser
+
+                if options.thumb:
+                    youtube.thumbnails().set(videoId=video_id, media_body=options.thumb).execute()
+                if options.playlist:
+                    playlists.add_video_to_playlist(youtube, video_id,
+                                                    title=lib.to_utf8(options.playlist), privacy=options.privacy)
+                output.write(video_id + "\n")
+        else:
+            raise AuthenticationError("Cannot get youtube resource")
 
 
 def main(arguments):
@@ -366,6 +396,12 @@ def main(arguments):
                       type="string", help='Credentials JSON file')
     parser.add_option('', '--auth-browser', dest='auth_browser', action='store_true',
                       help='Open a GUI browser to authenticate if required')
+    parser.add_option('', '--account', dest='account', type="string",
+                      help='Account label to isolate credentials (stored as <accounts-dir>/<label>.json)')
+    parser.add_option('', '--accounts', dest='accounts', type="string",
+                      help='Comma-separated list of account labels to upload to multiple accounts in one run')
+    parser.add_option('', '--accounts-dir', dest='accounts_dir', type="string",
+                      help='Directory to store account credential files (default: ~/.youtube-upload-accounts when --account/--accounts is used)')
 
     # Additional options
     parser.add_option('', '--chunksize', dest='chunksize', type="int",
