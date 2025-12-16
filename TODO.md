@@ -1,4 +1,4 @@
-1.[ ] **post upload verification** - after uploading the video, verify via content hash/tag search that the video exists on the channel.
+1.[x] **post upload verification** - after uploading the video, verify via content hash/tag search that the video exists on the channel.
 
 2.[ ] **playlist verification** - if the folder name matches an existing playlist, add the upload there; create if missing.
 

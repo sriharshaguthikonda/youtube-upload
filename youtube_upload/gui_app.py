@@ -128,19 +128,21 @@ class UploadGUI:
         self.open_link_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(frame, text="Authenticate with browser (GUI)", variable=self.auth_browser_var).grid(row=14, column=1, sticky="w")
         ttk.Checkbutton(frame, text="Open uploaded video link after upload", variable=self.open_link_var).grid(row=15, column=1, sticky="w")
+        self.debug_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(frame, text="Enable debug logging", variable=self.debug_var).grid(row=16, column=1, sticky="w")
 
         # Video selector
         videos_frame = ttk.Frame(frame)
-        videos_frame.grid(row=16, column=1, sticky="w")
+        videos_frame.grid(row=17, column=1, sticky="w")
         ttk.Button(videos_frame, text="Choose Video(s)", command=self._choose_videos).grid(row=0, column=0, sticky="w")
         self.videos_label = ttk.Label(videos_frame, text="No videos selected")
         self.videos_label.grid(row=0, column=1, padx=6, sticky="w")
-        ttk.Label(frame, text="Videos*").grid(row=16, column=0, sticky="w")
+        ttk.Label(frame, text="Videos*").grid(row=17, column=0, sticky="w")
 
         # Upload button
-        ttk.Button(frame, text="Upload", command=self._upload).grid(row=17, column=1, sticky="e", pady=8)
+        ttk.Button(frame, text="Upload", command=self._upload).grid(row=18, column=1, sticky="e", pady=8)
 
-        for i in range(0, 18):
+        for i in range(0, 19):
             frame.rowconfigure(i, pad=4)
         frame.columnconfigure(1, weight=1)
 
@@ -171,6 +173,7 @@ class UploadGUI:
         self.accounts_dir_var.set(data.get("accounts_dir", ""))
         self.auth_browser_var.set(bool(data.get("auth_browser", False)))
         self.open_link_var.set(bool(data.get("open_link", False)))
+        self.debug_var.set(bool(data.get("debug", False)))
 
         description = data.get("description", "")
         if description:
@@ -204,6 +207,7 @@ class UploadGUI:
             "accounts_dir": self.accounts_dir_var.get(),
             "auth_browser": bool(self.auth_browser_var.get()),
             "open_link": bool(self.open_link_var.get()),
+            "debug": bool(self.debug_var.get()),
             "thumbnail_path": self.thumbnail_path,
             "video_paths": self.video_paths,
         }
@@ -293,6 +297,8 @@ class UploadGUI:
             args.append("--auth-browser")
         if self.open_link_var.get():
             args.append("--open-link")
+        if self.debug_var.get():
+            args.append("--debug")
         skip_if_exists = self.skip_if_exists_var.get().strip()
         if skip_if_exists and skip_if_exists != "none":
             args += ["--skip-if-exists", skip_if_exists]

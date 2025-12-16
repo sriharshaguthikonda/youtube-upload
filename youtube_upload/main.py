@@ -67,6 +67,17 @@ EXIT_CODES = {
 WATCH_VIDEO_URL = "https://www.youtube.com/watch?v={id}"
 
 debug = lib.debug
+DEBUG_ENABLED = False
+def log_debug(message):
+    if DEBUG_ENABLED:
+        debug(message)
+        try:
+            logfile = Path.cwd() / "youtube_upload_debug.log"
+            with open(logfile, "a", encoding="utf-8", newline="\n") as logf:
+                logf.write(str(message) + "\n")
+        except Exception:
+            # Never let logging failures crash the app
+            pass
 struct = collections.namedtuple
 
 
@@ -163,13 +174,30 @@ def _find_existing_video(youtube, title=None, hash_tag=None, max_results=5):
     results = request.execute().get("items", [])
     for item in results:
         video_id = item.get("id", {}).get("videoId")
-        snippet = item.get("snippet", {}) or {}
         if hash_tag:
             # Hash search already acts as the match
             return video_id
-        if title and snippet.get("title", "").strip().lower() == title.strip().lower():
-            return video_id
-    return None
+
+
+def create_internet_shortcut(video_path, video_url):
+    """Create a .url internet shortcut next to the uploaded video file."""
+    path = Path(video_path)
+    shortcut_path = path.parent / (path.name + ".url")
+    
+    shortcut_path_no_url = path.parent / (path.name)
+    
+    log_debug("Creating shortcut: video_path={0}, shortcut_path={1}".format(video_path, shortcut_path))
+    content = "[InternetShortcut]\nURL={0}\n".format(video_url)
+    try:
+        with open(shortcut_path, "w", encoding="utf-8", newline="\r\n") as shortcut_file:
+            shortcut_file.write(content)
+        log_debug("Wrote shortcut file bytes={0}".format(len(content)))
+        with open(shortcut_path_no_url, "w", encoding="utf-8", newline="\r\n") as shortcut_file:
+            shortcut_file.write(content)
+    except Exception as exc:
+        debug("Failed to write shortcut {0}: {1}".format(shortcut_path, exc))
+        return None
+    return shortcut_path
 
 
 def upload_youtube_video(youtube, options, video_path, total_videos, index):
@@ -330,6 +358,8 @@ def run_main(parser, options, args, output=sys.stdout):
                 if options.open_link:
                     open_link(video_url)  # Opens the Youtube Video's link in a webbrowser
 
+                log_debug("Post-upload actions for video_path={0}".format(video_path))
+                create_internet_shortcut(video_path, video_url)
                 if options.thumb:
                     youtube.thumbnails().set(videoId=video_id, media_body=options.thumb).execute()
                 if options.playlist:
@@ -408,8 +438,15 @@ def main(arguments):
                       default=1024 * 1024 * 8, help='Update file chunksize')
     parser.add_option('', '--open-link', dest='open_link', action='store_true',
                       help='Opens a url in a web browser to display the uploaded video')
+    parser.add_option('', '--debug', dest='debug', action='store_true',
+                      help='Enable verbose debug logging')
 
     options, args = parser.parse_args(arguments)
+
+    global DEBUG_ENABLED
+    DEBUG_ENABLED = bool(options.debug)
+    if DEBUG_ENABLED:
+        debug("Debug logging enabled")
 
     if options.description_file is not None and os.path.exists(options.description_file):
         with open(options.description_file, encoding="utf-8") as file:
