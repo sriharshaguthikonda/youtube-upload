@@ -49,17 +49,17 @@
 
 13.[ ] **CLI help polish** - add `--version`, group flags, richer `--help` examples, exit codes table.
 
-14.[ ] **GUI improvements** - add per-file progress bar, 
+14.[x] **GUI improvements** - add per-file progress bar, 
 
-15.[ ] have a log/status pane, 
+15.[x] have a log/status pane, 
 
-16.[ ] add cancel button to stop the upload, 
+16.[x] add cancel button to stop the upload, 
 
-17.[ ] able to drag-drop for files,folders , 
+17.[x] able to drag-drop for files,folders , 
 
-18.[ ] field validation, 
+18.[x] field validation, 
 
-19.[ ] persist window size save and reload!. 
+19.[x] persist window size save and reload!. 
 
 20.[ ] **CLI ergonomics** - auto-use `.txt` next to video as description, document title sanitization, warn when `--publish-at` lacks timezone.
 

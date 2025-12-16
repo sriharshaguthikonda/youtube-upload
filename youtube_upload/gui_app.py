@@ -2,10 +2,19 @@
 """Simple Tkinter GUI wrapper around the existing youtube-upload CLI."""
 
 import json
+import shlex
 import sys
+import threading
 import tkinter as tk
+from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
+
+try:
+    from tkinterdnd2 import DND_FILES, TkinterDnD  # type: ignore
+except ImportError:  # pragma: no cover - optional dependency
+    DND_FILES = None
+    TkinterDnD = None
 
 # Ensure local package has priority whether run as module or script
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -22,9 +31,14 @@ class UploadGUI:
 
         self.video_paths = []
         self.thumbnail_path = None
+        self.progress_bars = {}
+        self._uploading = False
+        self.cancel_event = threading.Event()
+        self._log_lines = 0
 
         self._build_form()
         self._load_settings()
+        self._setup_drag_and_drop()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_form(self):
@@ -142,10 +156,35 @@ class UploadGUI:
         self.videos_label.grid(row=0, column=2, padx=6, sticky="w")
         videos_frame.columnconfigure(0, weight=1)
 
-        # Upload button
-        ttk.Button(frame, text="Upload", command=self._upload).grid(row=18, column=1, sticky="e", pady=8)
+        # Upload/cancel buttons
+        buttons = ttk.Frame(frame)
+        buttons.grid(row=18, column=1, sticky="e", pady=8)
+        self.upload_button = ttk.Button(buttons, text="Upload", command=self._upload)
+        self.upload_button.grid(row=0, column=0, padx=(0, 6))
+        self.cancel_button = ttk.Button(buttons, text="Cancel", command=self._cancel_upload, state="disabled")
+        self.cancel_button.grid(row=0, column=1)
 
-        for i in range(0, 19):
+        # Progress area
+        ttk.Separator(frame, orient="horizontal").grid(row=19, column=0, columnspan=2, sticky="ew", pady=(8, 4))
+        ttk.Label(frame, text="Upload Progress").grid(row=20, column=0, sticky="nw")
+        self.progress_container = ttk.Frame(frame)
+        self.progress_container.grid(row=20, column=1, sticky="nsew")
+        self.progress_container.columnconfigure(1, weight=1)
+
+        # Log pane
+        ttk.Separator(frame, orient="horizontal").grid(row=21, column=0, columnspan=2, sticky="ew", pady=(8, 4))
+        ttk.Label(frame, text="Status / Log").grid(row=22, column=0, sticky="nw")
+        log_frame = ttk.Frame(frame)
+        log_frame.grid(row=22, column=1, sticky="nsew")
+        self.log_text = tk.Text(log_frame, width=60, height=8, wrap="word", state="disabled")
+        scrollbar = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
+        self.log_text.configure(yscrollcommand=scrollbar.set)
+        self.log_text.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        log_frame.columnconfigure(0, weight=1)
+        log_frame.rowconfigure(0, weight=1)
+
+        for i in range(0, 23):
             frame.rowconfigure(i, pad=4)
         frame.columnconfigure(1, weight=1)
 
@@ -191,6 +230,13 @@ class UploadGUI:
             self.video_path_var.set("; ".join(self.video_paths))
             self.videos_label.config(text=f"{len(self.video_paths)} file(s) selected")
 
+        geometry = data.get("geometry")
+        if geometry:
+            try:
+                self.root.geometry(geometry)
+            except Exception:
+                pass
+
     def _save_settings(self):
         data = {
             "category": self.category_var.get(),
@@ -208,6 +254,7 @@ class UploadGUI:
             "debug": bool(self.debug_var.get()),
             "thumbnail_path": self.thumbnail_path,
             "video_paths": self.video_paths if self.video_paths else [],
+            "geometry": self.root.winfo_geometry(),
 
         }
         try:
@@ -225,6 +272,7 @@ class UploadGUI:
         if paths:
             self.video_paths = list(paths)
             self.videos_label.config(text=f"{len(self.video_paths)} file(s) selected")
+            self._reset_progress_bars()
 
     def _choose_thumbnail(self):
         path = filedialog.askopenfilename(title="Select thumbnail (JPEG/PNG)")
@@ -247,11 +295,127 @@ class UploadGUI:
         if path:
             self.accounts_dir_var.set(path)
 
-    def _upload(self):
-        title = self.title_var.get().strip()
+    def _setup_drag_and_drop(self):
+        if TkinterDnD and DND_FILES:
+            try:
+                self.root.drop_target_register(DND_FILES)
+                self.root.dnd_bind("<<Drop>>", self._on_drop)
+            except Exception:
+                pass
+
+    def _on_drop(self, event):
+        raw = event.data or ""
+        try:
+            dropped = shlex.split(raw)
+        except ValueError:
+            dropped = raw.split()
+        files = []
+        for item in dropped:
+            path = Path(item)
+            if path.is_dir():
+                for sub in path.rglob("*"):
+                    if sub.is_file():
+                        files.append(str(sub))
+            elif path.is_file():
+                files.append(str(path))
+        if files:
+            self.video_paths = files
+            self.video_path_var.set("; ".join(self.video_paths))
+            self.videos_label.config(text=f"{len(self.video_paths)} file(s) selected")
+            self._reset_progress_bars()
+            self._log(f"Added {len(files)} file(s) via drag-and-drop.")
+
+    def _log(self, message):
+        self._log_lines += 1
+        prefix = f"[{self._log_lines:03d}] "
+        self.log_text.configure(state="normal")
+        self.log_text.insert("end", prefix + str(message) + "\n")
+        self.log_text.see("end")
+        self.log_text.configure(state="disabled")
+
+    def _reset_progress_bars(self):
+        # Clear previous progress widgets
+        for child in self.progress_container.winfo_children():
+            child.destroy()
+        self.progress_bars = {}
+        for row, path in enumerate(self.video_paths):
+            ttk.Label(self.progress_container, text=Path(path).name).grid(row=row, column=0, sticky="w", padx=(0, 6))
+            bar = ttk.Progressbar(self.progress_container, mode="determinate", length=240, maximum=100)
+            bar.grid(row=row, column=1, sticky="ew", pady=2)
+            self.progress_bars[path] = bar
+
+    def _progress_factory(self, video_path):
+        bar = self.progress_bars.get(video_path)
+
+        def _callback(total_size, completed):
+            if self.cancel_event.is_set():
+                raise cli_main.UploadCancelled("Cancelled by user")
+            if not bar:
+                return
+            def _update():
+                bar.configure(maximum=max(total_size, 1))
+                bar["value"] = completed
+            self._log(f"{Path(video_path).name}: {completed}/{total_size} bytes")
+            self.root.after(0, _update)
+
+        def _finish():
+            if not bar:
+                return
+            self.root.after(0, lambda: bar.configure(value=bar.cget("maximum")))
+
+        return cli_main.struct("ProgressInfo", ["callback", "finish"])(callback=_callback, finish=_finish)
+
+    def _validate_fields(self):
+        errors = []
+        if not self.title_var.get().strip():
+            errors.append("Title is required.")
         if not self.video_paths:
-            messagebox.showerror("Missing videos", "Please select at least one video file.")
+            errors.append("Select at least one video file.")
+        missing = [p for p in self.video_paths if not Path(p).exists()]
+        if missing:
+            errors.append("Missing files:\n" + "\n".join(missing[:5]))
+        publish_at = self.publish_at_var.get().strip()
+        if publish_at:
+            try:
+                parsed = publish_at.replace("Z", "+00:00")
+                datetime.fromisoformat(parsed)
+            except ValueError:
+                errors.append("Publish at must be ISO 8601 (e.g., 2024-01-31T12:30:00Z).")
+        thumb = self.thumbnail_path
+        if thumb and not Path(thumb).exists():
+            errors.append("Thumbnail path does not exist.")
+        for optional_path, label in [
+            (self.secrets_var.get().strip(), "Client secrets"),
+            (self.credentials_var.get().strip(), "Credentials file"),
+            (self.accounts_dir_var.get().strip(), "Accounts directory"),
+        ]:
+            if optional_path and not Path(optional_path).exists():
+                errors.append(f"{label} does not exist: {optional_path}")
+        unsupported = []
+        for p in self.video_paths:
+            suffix = Path(p).suffix.lower().lstrip(".")
+            if suffix and suffix not in cli_main.SUPPORTED_VIDEO_EXTENSIONS:
+                unsupported.append(p)
+        if unsupported:
+            errors.append("Unsupported formats:\n" + "\n".join(unsupported[:5]))
+        return errors
+
+    def _cancel_upload(self):
+        if self._uploading:
+            self.cancel_event.set()
+            self._log("Cancellation requested.")
+            self.cancel_button.state(["disabled"])
+
+    def _upload(self):
+        if self._uploading:
+            messagebox.showinfo("Upload in progress", "An upload is already running.")
             return
+        errors = self._validate_fields()
+        if errors:
+            messagebox.showerror("Invalid fields", "\n\n".join(errors))
+            return
+        title = self.title_var.get().strip()
+        self._reset_progress_bars()
 
         description = self.description_text.get("1.0", "end").strip()
         args = []
@@ -309,18 +473,38 @@ class UploadGUI:
 
         full_args = args + self.video_paths
 
-        try:
-            cli_main.main(full_args)
-            messagebox.showinfo("Upload complete", "Upload finished without error.")
-        except SystemExit as exc:  # in case cli_main.run() is used accidentally
-            if exc.code not in (None, 0):
-                messagebox.showerror("Upload error", f"Exited with code {exc.code}")
-        except Exception as exc:  # broad to surface any CLI errors to the user
-            messagebox.showerror("Upload failed", str(exc))
+        self._uploading = True
+        self.cancel_event.clear()
+        cli_main.set_progress_factory(self._progress_factory)
+        self.upload_button.state(["disabled"])
+        self.cancel_button.state(["!disabled"])
+        self._log(f"Starting upload of {len(self.video_paths)} file(s).")
+
+        def _worker():
+            try:
+                cli_main.main(full_args)
+                self.root.after(0, lambda: messagebox.showinfo("Upload complete", "Upload finished without error."))
+                self._log("Upload completed successfully.")
+            except SystemExit as exc:  # in case cli_main.run() is used accidentally
+                if exc.code not in (None, 0):
+                    self.root.after(0, lambda exc=exc: messagebox.showerror("Upload error", f"Exited with code {exc.code}"))
+                    self._log(f"Upload exited with code {exc.code}")
+            except cli_main.UploadCancelled:
+                self.root.after(0, lambda: messagebox.showinfo("Upload cancelled", "Upload was cancelled."))
+                self._log("Upload cancelled by user.")
+            except Exception as exc:  # broad to surface any CLI errors to the user
+                self.root.after(0, lambda exc=exc: messagebox.showerror("Upload failed", str(exc)))
+                self._log(f"Upload failed: {exc}")
+            finally:
+                self._uploading = False
+                self.upload_button.state(["!disabled"])
+                self.cancel_button.state(["disabled"])
+
+        threading.Thread(target=_worker, daemon=True).start()
 
 
 def main():
-    root = tk.Tk()
+    root = TkinterDnD.Tk() if TkinterDnD else tk.Tk()
     UploadGUI(root)
     root.mainloop()
 

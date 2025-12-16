@@ -47,6 +47,11 @@ class InvalidCategory(Exception):
     pass
 
 
+class UploadCancelled(Exception):
+    """Raised when an upload is cancelled by the user via a progress callback."""
+    pass
+
+
 class OptionsError(Exception):
     pass
 
@@ -71,6 +76,7 @@ EXIT_CODES = {
     AuthenticationError: 4,
     oauth2client.client.FlowExchangeError: 4,
     NotImplementedError: 5,
+    UploadCancelled: 6,
 }
 
 SUPPORTED_VIDEO_EXTENSIONS = {
@@ -110,11 +116,18 @@ def log_debug(message):
             # Never let logging failures crash the app
             pass
 struct = collections.namedtuple
+PROGRESS_FACTORY = None
 
 
 def open_link(url):
     """Opens a URL link in the client's browser."""
     webbrowser.open(url)
+
+
+def set_progress_factory(factory):
+    """Register a callable that receives video_path -> progressinfo(callback, finish)."""
+    global PROGRESS_FACTORY
+    PROGRESS_FACTORY = factory
 
 
 def get_progress_info():
@@ -258,7 +271,7 @@ def upload_youtube_video(youtube, options, video_path, total_videos, index):
     ns = dict(title=title, n=index + 1, total=total_videos)
     title_template = u(options.title_template)
     complete_title = (title_template.format(**ns) if total_videos > 1 else title)
-    progress = get_progress_info()
+    progress = PROGRESS_FACTORY(video_path) if PROGRESS_FACTORY else get_progress_info()
     category_id = get_category_id(options.category)
 
     hash_tag = None
