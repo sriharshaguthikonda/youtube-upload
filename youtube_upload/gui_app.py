@@ -83,7 +83,7 @@ class UploadGUI:
         self.thumb_label.grid(row=0, column=1, sticky="w", padx=6)
         ttk.Label(frame, text="Thumbnail").grid(row=8, column=0, sticky="w")
 
-        # Client secrets (optional)
+        # Client secrets (optional; auto-resolves from accounts dir if set)
         ttk.Label(frame, text="Client secrets (optional)").grid(row=9, column=0, sticky="w")
         secrets_frame = ttk.Frame(frame)
         secrets_frame.grid(row=9, column=1, sticky="ew")
@@ -101,25 +101,43 @@ class UploadGUI:
         ttk.Button(creds_frame, text="Browse", command=self._choose_credentials).grid(row=0, column=1, padx=6)
         creds_frame.columnconfigure(0, weight=1)
 
+        # Account selection
+        ttk.Label(frame, text="Account label").grid(row=11, column=0, sticky="w")
+        self.account_var = tk.StringVar()
+        ttk.Entry(frame, textvariable=self.account_var).grid(row=11, column=1, sticky="ew")
+
+        ttk.Label(frame, text="Accounts (comma separated)").grid(row=12, column=0, sticky="w")
+        self.accounts_var = tk.StringVar()
+        ttk.Entry(frame, textvariable=self.accounts_var).grid(row=12, column=1, sticky="ew")
+
+        # Accounts dir
+        ttk.Label(frame, text="Accounts dir (optional)").grid(row=13, column=0, sticky="w")
+        accounts_dir_frame = ttk.Frame(frame)
+        accounts_dir_frame.grid(row=13, column=1, sticky="ew")
+        self.accounts_dir_var = tk.StringVar()
+        ttk.Entry(accounts_dir_frame, textvariable=self.accounts_dir_var).grid(row=0, column=0, sticky="ew")
+        ttk.Button(accounts_dir_frame, text="Browse", command=self._choose_accounts_dir).grid(row=0, column=1, padx=6)
+        accounts_dir_frame.columnconfigure(0, weight=1)
+
         # Checkboxes
         # Default to console-based auth to avoid missing Qt/PySide dependencies
         self.auth_browser_var = tk.BooleanVar(value=False)
         self.open_link_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(frame, text="Authenticate with browser (GUI)", variable=self.auth_browser_var).grid(row=11, column=1, sticky="w")
-        ttk.Checkbutton(frame, text="Open uploaded video link after upload", variable=self.open_link_var).grid(row=12, column=1, sticky="w")
+        ttk.Checkbutton(frame, text="Authenticate with browser (GUI)", variable=self.auth_browser_var).grid(row=14, column=1, sticky="w")
+        ttk.Checkbutton(frame, text="Open uploaded video link after upload", variable=self.open_link_var).grid(row=15, column=1, sticky="w")
 
         # Video selector
         videos_frame = ttk.Frame(frame)
-        videos_frame.grid(row=13, column=1, sticky="w")
+        videos_frame.grid(row=16, column=1, sticky="w")
         ttk.Button(videos_frame, text="Choose Video(s)", command=self._choose_videos).grid(row=0, column=0, sticky="w")
         self.videos_label = ttk.Label(videos_frame, text="No videos selected")
         self.videos_label.grid(row=0, column=1, padx=6, sticky="w")
-        ttk.Label(frame, text="Videos*").grid(row=13, column=0, sticky="w")
+        ttk.Label(frame, text="Videos*").grid(row=16, column=0, sticky="w")
 
         # Upload button
-        ttk.Button(frame, text="Upload", command=self._upload).grid(row=14, column=1, sticky="e", pady=8)
+        ttk.Button(frame, text="Upload", command=self._upload).grid(row=17, column=1, sticky="e", pady=8)
 
-        for i in range(0, 15):
+        for i in range(0, 18):
             frame.rowconfigure(i, pad=4)
         frame.columnconfigure(1, weight=1)
 
@@ -144,6 +162,11 @@ class UploadGUI:
         path = filedialog.askopenfilename(title="Select credentials file")
         if path:
             self.credentials_var.set(path)
+
+    def _choose_accounts_dir(self):
+        path = filedialog.askdirectory(title="Select accounts directory")
+        if path:
+            self.accounts_dir_var.set(path)
 
     def _upload(self):
         title = self.title_var.get().strip()
@@ -177,10 +200,18 @@ class UploadGUI:
         if self.thumbnail_path:
             args += ["--thumbnail", self.thumbnail_path]
 
+        # Prefer explicit client secrets; otherwise CLI will resolve from accounts dir or defaults
         if self.secrets_var.get().strip():
             args += ["--client-secrets", self.secrets_var.get().strip()]
         if self.credentials_var.get().strip():
             args += ["--credentials-file", self.credentials_var.get().strip()]
+
+        if self.account_var.get().strip():
+            args += ["--account", self.account_var.get().strip()]
+        if self.accounts_var.get().strip():
+            args += ["--accounts", self.accounts_var.get().strip()]
+        if self.accounts_dir_var.get().strip():
+            args += ["--accounts-dir", self.accounts_dir_var.get().strip()]
 
         if self.auth_browser_var.get():
             args.append("--auth-browser")
