@@ -21,13 +21,15 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PARENT = SCRIPT_DIR.parent
 if str(PARENT) not in sys.path:
     sys.path.insert(0, str(PARENT))
-import youtube_upload.main as cli_main
+from youtube_upload import gui_theme  # ruff: noqa: E402
+import youtube_upload.main as cli_main  # ruff: noqa: E402
 
 
 class UploadGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("YouTube Upload GUI")
+        self.palette = gui_theme.apply_dark_theme(self.root)
 
         self.video_paths = []
         self.thumbnail_path = None
@@ -47,8 +49,8 @@ class UploadGUI:
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
 
-        # Title
-        ttk.Label(frame, text="Title*").grid(row=0, column=0, sticky="w")
+        # Title (optional; defaults to filename)
+        ttk.Label(frame, text="Title (optional)").grid(row=0, column=0, sticky="w")
         self.title_var = tk.StringVar()
         ttk.Entry(frame, textvariable=self.title_var, width=50).grid(row=0, column=1, sticky="ew")
 
@@ -56,6 +58,7 @@ class UploadGUI:
         ttk.Label(frame, text="Description").grid(row=1, column=0, sticky="nw")
         self.description_text = tk.Text(frame, width=50, height=4)
         self.description_text.grid(row=1, column=1, sticky="ew")
+        gui_theme.style_text_widget(self.description_text, self.palette)
 
         # Tags
         ttk.Label(frame, text="Tags (comma separated)").grid(row=2, column=0, sticky="w")
@@ -183,6 +186,7 @@ class UploadGUI:
         scrollbar.grid(row=0, column=1, sticky="ns")
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
+        gui_theme.style_text_widget(self.log_text, self.palette)
 
         for i in range(0, 23):
             frame.rowconfigure(i, pad=4)
@@ -367,8 +371,6 @@ class UploadGUI:
 
     def _validate_fields(self):
         errors = []
-        if not self.title_var.get().strip():
-            errors.append("Title is required.")
         if not self.video_paths:
             errors.append("Select at least one video file.")
         missing = [p for p in self.video_paths if not Path(p).exists()]
