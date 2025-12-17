@@ -485,6 +485,12 @@ class UploadGUI:
             bar.grid(row=row, column=1, sticky="ew", pady=2)
             self.progress_bars[path] = bar
 
+    def _notify_completion(self):
+        try:
+            self.root.bell()
+        except Exception:
+            pass
+
     def _apply_topmost(self):
         try:
             self.root.wm_attributes("-topmost", bool(self.always_on_top_var.get()))
@@ -627,6 +633,7 @@ class UploadGUI:
                 cli_main.main(full_args)
                 self.root.after(0, lambda: messagebox.showinfo("Upload complete", "Upload finished without error."))
                 self._log("Upload completed successfully.")
+                self.root.after(0, self._notify_completion)
             except SystemExit as exc:  # in case cli_main.run() is used accidentally
                 if exc.code not in (None, 0):
                     self.root.after(0, lambda exc=exc: messagebox.showerror("Upload error", f"Exited with code {exc.code}"))
