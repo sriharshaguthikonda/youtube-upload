@@ -192,19 +192,67 @@ class UploadGUI:
             frame.rowconfigure(i, pad=4)
         frame.columnconfigure(1, weight=1)
 
-    @property
-    def _settings_path(self):
+    def _settings_path_for_accounts_dir(self, accounts_dir: str | None):
+        if accounts_dir:
+            return Path(accounts_dir) / "gui_settings.json"
         return Path.home() / ".youtube_upload_gui_settings.json"
 
-    def _load_settings(self):
+    @property
+    def _settings_path(self):
+        return self._settings_path_for_accounts_dir(self.accounts_dir_var.get().strip() or None)
+
+    def _reset_settings_fields(self):
+        self.category_var.set("")
+        self.privacy_var.set("public")
+        self.publish_at_var.set("")
+        self.skip_if_exists_var.set("hash")
+        self.secrets_var.set("")
+        self.credentials_var.set("")
+        self.account_var.set("")
+        self.accounts_var.set("")
+        self.auth_browser_var.set(False)
+        self.open_link_var.set(False)
+        self.debug_var.set(False)
+        self.description_text.delete("1.0", "end")
+        self.thumbnail_path = None
+        self.thumb_label.config(text="No file selected")
+        self.video_paths = []
+        self.video_path_var.set("")
+        self.videos_label.config(text="No videos selected")
+
+    def _apply_account_folder_defaults(self, accounts_dir: str | None):
+        if not accounts_dir:
+            return
+        base = Path(accounts_dir)
+        secrets_candidate = base / "client_secrets.json"
+        if secrets_candidate.exists():
+            self.secrets_var.set(str(secrets_candidate))
+        for cred_name in [".youtube-upload-credentials.json", "credentials.json"]:
+            cred_candidate = base / cred_name
+            if cred_candidate.exists():
+                self.credentials_var.set(str(cred_candidate))
+                break
+        if not self.account_var.get():
+            self.account_var.set(base.name)
+
+    def _load_settings(self, accounts_dir: str | None = None, clear_current: bool = False, apply_account_defaults: bool = False):
+        target_dir = accounts_dir or self.accounts_dir_var.get().strip() or None
+        if clear_current:
+            self._reset_settings_fields()
+        settings_path = self._settings_path_for_accounts_dir(target_dir)
         try:
-            data = json.loads(self._settings_path.read_text(encoding="utf-8"))
+            data = json.loads(settings_path.read_text(encoding="utf-8"))
         except FileNotFoundError:
+            if apply_account_defaults:
+                self._apply_account_folder_defaults(target_dir)
             return
         except Exception:
             # Ignore malformed settings to avoid blocking startup
+            if apply_account_defaults:
+                self._apply_account_folder_defaults(target_dir)
             return
 
+        self.accounts_dir_var.set(data.get("accounts_dir", target_dir or ""))
         self.category_var.set(data.get("category", ""))
         self.privacy_var.set(data.get("privacy", "public"))
         self.publish_at_var.set(data.get("publish_at", ""))
@@ -240,6 +288,8 @@ class UploadGUI:
                 self.root.geometry(geometry)
             except Exception:
                 pass
+        if apply_account_defaults:
+            self._apply_account_folder_defaults(target_dir)
 
     def _save_settings(self):
         data = {
@@ -298,6 +348,8 @@ class UploadGUI:
         path = filedialog.askdirectory(title="Select accounts directory")
         if path:
             self.accounts_dir_var.set(path)
+            # Load settings stored alongside the selected account folder
+            self._load_settings(accounts_dir=path, clear_current=True, apply_account_defaults=True)
 
     def _setup_drag_and_drop(self):
         if TkinterDnD and DND_FILES:
