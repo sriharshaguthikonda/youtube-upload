@@ -272,7 +272,18 @@ class UploadGUI:
             self._loading_settings = False
             return
 
-        self.accounts_dir_var.set(data.get("accounts_dir", target_dir or ""))
+        data_accounts_dir = data.get("accounts_dir", target_dir or "")
+        if accounts_dir is None and data_accounts_dir:
+            alt_settings_path = self._settings_path_for_accounts_dir(data_accounts_dir)
+            if alt_settings_path != settings_path and alt_settings_path.exists():
+                self._loading_settings = False
+                return self._load_settings(
+                    accounts_dir=data_accounts_dir,
+                    clear_current=clear_current,
+                    apply_account_defaults=apply_account_defaults,
+                )
+
+        self.accounts_dir_var.set(data_accounts_dir)
         self.category_var.set(data.get("category", ""))
         self.privacy_var.set(data.get("privacy", "public"))
         self.publish_at_var.set(data.get("publish_at", ""))
@@ -312,8 +323,10 @@ class UploadGUI:
         if apply_account_defaults:
             self._apply_account_folder_defaults(target_dir)
         self._last_loaded_accounts_dir = target_dir
-        self._apply_topmost()
         self._loading_settings = False
+        # Apply after loading; run once immediately and once after idle so Tk has realized.
+        self._apply_topmost()
+        self.root.after_idle(self._apply_topmost)
 
     def _on_video_path_change(self, *_):
         if self._loading_settings:
@@ -503,6 +516,8 @@ class UploadGUI:
             self.root.wm_attributes("-topmost", bool(self.always_on_top_var.get()))
         except Exception:
             pass
+        if not self._loading_settings:
+            self._save_settings()
 
     def _progress_factory(self, video_path):
         bar = self.progress_bars.get(video_path)
