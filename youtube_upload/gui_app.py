@@ -2,7 +2,7 @@
 """Simple Tkinter GUI wrapper around the existing youtube-upload CLI."""
 
 import json
-import shlex
+import re
 import sys
 import threading
 import tkinter as tk
@@ -318,8 +318,14 @@ class UploadGUI:
     def _on_video_path_change(self, *_):
         if self._loading_settings:
             return
-        raw = self.video_path_var.get() or ""
-        parts = [p.strip() for p in raw.replace("\r", "").replace("\n", ";").split(";") if p.strip()]
+        raw = (self.video_path_var.get() or "").replace("\r", "")
+        parts: list[str] = []
+        for chunk in re.split(r"\n+", raw):
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+            split_chunk = re.split(r";\s*(?=[A-Za-z]:\\)", chunk)
+            parts.extend(p.strip() for p in split_chunk if p.strip())
         supported, unsupported = gui_app_files.filter_supported_video_paths(parts)
         self.video_paths = supported
         if unsupported:
@@ -438,13 +444,14 @@ class UploadGUI:
 
     def _on_drop(self, event):
         raw = event.data or ""
+        # Use Tcl list splitter to handle braces/quoted paths from TkinterDnD.
         try:
-            dropped = shlex.split(raw)
-        except ValueError:
-            dropped = raw.split()
+            dropped = list(self.root.tk.splitlist(raw))
+        except Exception:
+            dropped = re.findall(r"{[^}]+}|[^\s]+", raw.strip())
         files: list[str] = []
         for item in dropped:
-            path = Path(item)
+            path = Path(item.strip("{}"))
             if path.is_dir():
                 files.extend(str(sub) for sub in path.rglob("*") if sub.is_file())
             elif path.is_file():
@@ -522,9 +529,17 @@ class UploadGUI:
         errors = []
         if not self.video_paths:
             errors.append("Select at least one supported video file.")
+            return errors
         missing = [p for p in self.video_paths if not Path(p).exists()]
         if missing:
-            errors.append("Missing files:\n" + "\n".join(missing[:5]))
+            self._log("Skipping missing files: " + ", ".join(missing[:5]))
+            self.video_paths = [p for p in self.video_paths if p not in missing]
+            if self.video_paths:
+                self.video_path_var.set("; ".join(self.video_paths))
+                self.videos_label.config(text=f"{len(self.video_paths)} supported file(s) selected")
+                self._reset_progress_bars()
+            else:
+                errors.append("All selected video files are missing. Please choose at least one existing file.")
         publish_at = self.publish_at_var.get().strip()
         if publish_at:
             try:
