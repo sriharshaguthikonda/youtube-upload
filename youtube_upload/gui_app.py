@@ -436,21 +436,29 @@ class UploadGUI:
             dropped = shlex.split(raw)
         except ValueError:
             dropped = raw.split()
-        files = []
+        files: list[str] = []
         for item in dropped:
             path = Path(item)
             if path.is_dir():
-                for sub in path.rglob("*"):
-                    if sub.is_file():
-                        files.append(str(sub))
+                files.extend(str(sub) for sub in path.rglob("*") if sub.is_file())
             elif path.is_file():
                 files.append(str(path))
-        if files:
-            self.video_paths = files
+        if not files:
+            self._log("No files found in dropped items.")
+            return
+        supported, unsupported = gui_app_files.filter_supported_video_paths(files)
+        self.video_paths = list(supported)
+        if unsupported:
+            self._log(f"Ignoring unsupported files: {', '.join(Path(p).name for p in unsupported)}")
+        if supported:
             self.video_path_var.set("; ".join(self.video_paths))
-            self.videos_label.config(text=f"{len(self.video_paths)} file(s) selected")
-            self._reset_progress_bars()
-            self._log(f"Added {len(files)} file(s) via drag-and-drop.")
+            self.videos_label.config(text=f"{len(self.video_paths)} supported file(s) selected")
+            self._log(f"Added {len(supported)} file(s) via drag-and-drop.")
+        else:
+            self.video_path_var.set("")
+            self.videos_label.config(text="No supported videos selected")
+            self._log("No supported videos found in dropped items.")
+        self._reset_progress_bars()
 
     def _log(self, message):
         self._log_lines += 1
