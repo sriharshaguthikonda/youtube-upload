@@ -21,7 +21,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PARENT = SCRIPT_DIR.parent
 if str(PARENT) not in sys.path:
     sys.path.insert(0, str(PARENT))
-from youtube_upload import gui_theme  # ruff: noqa: E402
+from youtube_upload import gui_app_files, gui_theme  # ruff: noqa: E402
 import youtube_upload.main as cli_main  # ruff: noqa: E402
 
 
@@ -314,11 +314,14 @@ class UploadGUI:
             return
         raw = self.video_path_var.get() or ""
         parts = [p.strip() for p in raw.replace("\r", "").replace("\n", ";").split(";") if p.strip()]
-        self.video_paths = parts
-        if parts:
-            self.videos_label.config(text=f"{len(parts)} file(s) selected")
+        supported, unsupported = gui_app_files.filter_supported_video_paths(parts)
+        self.video_paths = supported
+        if unsupported:
+            self._log(f"Ignoring unsupported files: {', '.join(Path(p).name for p in unsupported)}")
+        if supported:
+            self.videos_label.config(text=f"{len(supported)} supported file(s) selected")
         else:
-            self.videos_label.config(text="No videos selected")
+            self.videos_label.config(text="No supported videos selected")
         self._reset_progress_bars()
 
     def _save_settings(self):
@@ -354,8 +357,14 @@ class UploadGUI:
     def _choose_videos(self):
         paths = filedialog.askopenfilenames(title="Select video files")
         if paths:
-            self.video_paths = list(paths)
-            self.videos_label.config(text=f"{len(self.video_paths)} file(s) selected")
+            supported, unsupported = gui_app_files.filter_supported_video_paths(paths)
+            self.video_paths = list(supported)
+            if unsupported:
+                self._log(f"Ignoring unsupported files: {', '.join(Path(p).name for p in unsupported)}")
+            if supported:
+                self.videos_label.config(text=f"{len(self.video_paths)} supported file(s) selected")
+            else:
+                self.videos_label.config(text="No supported videos selected")
             self._reset_progress_bars()
 
     def _choose_thumbnail(self):
@@ -465,7 +474,7 @@ class UploadGUI:
     def _validate_fields(self):
         errors = []
         if not self.video_paths:
-            errors.append("Select at least one video file.")
+            errors.append("Select at least one supported video file.")
         missing = [p for p in self.video_paths if not Path(p).exists()]
         if missing:
             errors.append("Missing files:\n" + "\n".join(missing[:5]))
@@ -486,13 +495,6 @@ class UploadGUI:
         ]:
             if optional_path and not Path(optional_path).exists():
                 errors.append(f"{label} does not exist: {optional_path}")
-        unsupported = []
-        for p in self.video_paths:
-            suffix = Path(p).suffix.lower().lstrip(".")
-            if suffix and suffix not in cli_main.SUPPORTED_VIDEO_EXTENSIONS:
-                unsupported.append(p)
-        if unsupported:
-            errors.append("Unsupported formats:\n" + "\n".join(unsupported[:5]))
         return errors
 
     def _cancel_upload(self):
