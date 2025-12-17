@@ -150,11 +150,13 @@ class UploadGUI:
         ttk.Checkbutton(frame, text="Open uploaded video link after upload", variable=self.open_link_var).grid(row=15, column=1, sticky="w")
         self.debug_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(frame, text="Enable debug logging", variable=self.debug_var).grid(row=16, column=1, sticky="w")
+        self.always_on_top_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(frame, text="Keep window on top", variable=self.always_on_top_var, command=self._apply_topmost).grid(row=17, column=1, sticky="w")
 
         # Video selector
-        ttk.Label(frame, text="Choose Video(s)*").grid(row=17, column=0, sticky="w")
+        ttk.Label(frame, text="Choose Video(s)*").grid(row=18, column=0, sticky="w")
         videos_frame = ttk.Frame(frame)
-        videos_frame.grid(row=17, column=1, sticky="ew")
+        videos_frame.grid(row=18, column=1, sticky="ew")
         self.video_path_var = tk.StringVar()
         ttk.Entry(videos_frame, textvariable=self.video_path_var, width=40).grid(row=0, column=0, sticky="ew")
         ttk.Button(videos_frame, text="Browse Files", command=self._choose_videos).grid(row=0, column=1, padx=6)
@@ -167,24 +169,24 @@ class UploadGUI:
 
         # Upload/cancel buttons
         buttons = ttk.Frame(frame)
-        buttons.grid(row=18, column=1, sticky="e", pady=8)
+        buttons.grid(row=19, column=1, sticky="e", pady=8)
         self.upload_button = ttk.Button(buttons, text="Upload", command=self._upload)
         self.upload_button.grid(row=0, column=0, padx=(0, 6))
         self.cancel_button = ttk.Button(buttons, text="Cancel", command=self._cancel_upload, state="disabled")
         self.cancel_button.grid(row=0, column=1)
 
         # Progress area
-        ttk.Separator(frame, orient="horizontal").grid(row=19, column=0, columnspan=2, sticky="ew", pady=(8, 4))
-        ttk.Label(frame, text="Upload Progress").grid(row=20, column=0, sticky="nw")
+        ttk.Separator(frame, orient="horizontal").grid(row=20, column=0, columnspan=2, sticky="ew", pady=(8, 4))
+        ttk.Label(frame, text="Upload Progress").grid(row=21, column=0, sticky="nw")
         self.progress_container = ttk.Frame(frame)
-        self.progress_container.grid(row=20, column=1, sticky="nsew")
+        self.progress_container.grid(row=21, column=1, sticky="nsew")
         self.progress_container.columnconfigure(1, weight=1)
 
         # Log pane
-        ttk.Separator(frame, orient="horizontal").grid(row=21, column=0, columnspan=2, sticky="ew", pady=(8, 4))
-        ttk.Label(frame, text="Status / Log").grid(row=22, column=0, sticky="nw")
+        ttk.Separator(frame, orient="horizontal").grid(row=22, column=0, columnspan=2, sticky="ew", pady=(8, 4))
+        ttk.Label(frame, text="Status / Log").grid(row=23, column=0, sticky="nw")
         log_frame = ttk.Frame(frame)
-        log_frame.grid(row=22, column=1, sticky="nsew")
+        log_frame.grid(row=23, column=1, sticky="nsew")
         self.log_text = tk.Text(log_frame, width=60, height=8, wrap="word", state="disabled")
         scrollbar = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=scrollbar.set)
@@ -194,7 +196,7 @@ class UploadGUI:
         log_frame.rowconfigure(0, weight=1)
         gui_theme.style_text_widget(self.log_text, self.palette)
 
-        for i in range(0, 23):
+        for i in range(0, 25):
             frame.rowconfigure(i, pad=4)
         frame.columnconfigure(1, weight=1)
 
@@ -222,6 +224,7 @@ class UploadGUI:
         self.auth_browser_var.set(False)
         self.open_link_var.set(False)
         self.debug_var.set(False)
+        self.always_on_top_var.set(False)
         self.description_text.delete("1.0", "end")
         self.thumbnail_path = None
         self.thumb_label.config(text="No file selected")
@@ -282,6 +285,7 @@ class UploadGUI:
         self.auth_browser_var.set(bool(data.get("auth_browser", False)))
         self.open_link_var.set(bool(data.get("open_link", False)))
         self.debug_var.set(bool(data.get("debug", False)))
+        self.always_on_top_var.set(bool(data.get("always_on_top", False)))
 
         description = data.get("description", "")
         if description:
@@ -308,6 +312,7 @@ class UploadGUI:
         if apply_account_defaults:
             self._apply_account_folder_defaults(target_dir)
         self._last_loaded_accounts_dir = target_dir
+        self._apply_topmost()
         self._loading_settings = False
 
     def _on_video_path_change(self, *_):
@@ -340,6 +345,7 @@ class UploadGUI:
             "auth_browser": bool(self.auth_browser_var.get()),
             "open_link": bool(self.open_link_var.get()),
             "debug": bool(self.debug_var.get()),
+            "always_on_top": bool(self.always_on_top_var.get()),
             "thumbnail_path": self.thumbnail_path,
             "video_paths": self.video_paths if self.video_paths else [],
             "geometry": self.root.winfo_geometry(),
@@ -479,6 +485,12 @@ class UploadGUI:
             bar.grid(row=row, column=1, sticky="ew", pady=2)
             self.progress_bars[path] = bar
 
+    def _apply_topmost(self):
+        try:
+            self.root.wm_attributes("-topmost", bool(self.always_on_top_var.get()))
+        except Exception:
+            pass
+
     def _progress_factory(self, video_path):
         bar = self.progress_bars.get(video_path)
 
@@ -527,6 +539,10 @@ class UploadGUI:
         return errors
 
     def _cancel_upload(self):
+        if not self._uploading:
+            self.cancel_button.state(["disabled"])
+        self._reset_progress_bars()
+        self._apply_topmost()
         if self._uploading:
             self.cancel_event.set()
             self._log("Cancellation requested.")
