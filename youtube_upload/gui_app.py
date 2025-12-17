@@ -157,9 +157,10 @@ class UploadGUI:
         videos_frame.grid(row=17, column=1, sticky="ew")
         self.video_path_var = tk.StringVar()
         ttk.Entry(videos_frame, textvariable=self.video_path_var, width=40).grid(row=0, column=0, sticky="ew")
-        ttk.Button(videos_frame, text="Browse", command=self._choose_videos).grid(row=0, column=1, padx=6)
+        ttk.Button(videos_frame, text="Browse Files", command=self._choose_videos).grid(row=0, column=1, padx=6)
+        ttk.Button(videos_frame, text="Browse Folder", command=self._choose_video_folder).grid(row=0, column=2, padx=6)
         self.videos_label = ttk.Label(videos_frame, text="No videos selected")
-        self.videos_label.grid(row=0, column=2, padx=6, sticky="w")
+        self.videos_label.grid(row=0, column=3, padx=6, sticky="w")
         videos_frame.columnconfigure(0, weight=1)
         # React to manual typing/pasting of video paths
         self.video_path_var.trace_add("write", self._on_video_path_change)
@@ -389,6 +390,26 @@ class UploadGUI:
             self.accounts_dir_var.set(path)
             # Load settings stored alongside the selected account folder
             self._load_settings(accounts_dir=path, clear_current=True, apply_account_defaults=True)
+
+    def _choose_video_folder(self):
+        path = filedialog.askdirectory(title="Select folder containing videos")
+        if not path:
+            return
+        files = [str(p) for p in Path(path).rglob("*") if p.is_file()]
+        if not files:
+            self._log("No files found in the selected folder.")
+            return
+        supported, unsupported = gui_app_files.filter_supported_video_paths(files)
+        self.video_paths = list(supported)
+        if unsupported:
+            self._log(f"Ignoring unsupported files: {', '.join(Path(p).name for p in unsupported)}")
+        if supported:
+            self.video_path_var.set("; ".join(self.video_paths))
+            self.videos_label.config(text=f"{len(self.video_paths)} supported file(s) selected")
+        else:
+            self.video_path_var.set("")
+            self.videos_label.config(text="No supported videos selected")
+        self._reset_progress_bars()
 
     def _on_accounts_dir_change(self, *_):
         path = (self.accounts_dir_var.get() or "").strip()
