@@ -37,6 +37,8 @@ class UploadGUI:
         self._uploading = False
         self.cancel_event = threading.Event()
         self._log_lines = 0
+        self._loading_settings = False
+        self._last_loaded_accounts_dir: str | None = None
 
         self._build_form()
         self._load_settings()
@@ -135,7 +137,8 @@ class UploadGUI:
         accounts_dir_frame = ttk.Frame(frame)
         accounts_dir_frame.grid(row=13, column=1, sticky="ew")
         self.accounts_dir_var = tk.StringVar()
-        ttk.Entry(accounts_dir_frame, textvariable=self.accounts_dir_var).grid(row=0, column=0, sticky="ew")
+        self.accounts_dir_entry = ttk.Entry(accounts_dir_frame, textvariable=self.accounts_dir_var)
+        self.accounts_dir_entry.grid(row=0, column=0, sticky="ew")
         ttk.Button(accounts_dir_frame, text="Browse", command=self._choose_accounts_dir).grid(row=0, column=1, padx=6)
         accounts_dir_frame.columnconfigure(0, weight=1)
 
@@ -158,6 +161,8 @@ class UploadGUI:
         self.videos_label = ttk.Label(videos_frame, text="No videos selected")
         self.videos_label.grid(row=0, column=2, padx=6, sticky="w")
         videos_frame.columnconfigure(0, weight=1)
+        # React to manual typing/pasting of video paths
+        self.video_path_var.trace_add("write", self._on_video_path_change)
 
         # Upload/cancel buttons
         buttons = ttk.Frame(frame)
@@ -191,6 +196,9 @@ class UploadGUI:
         for i in range(0, 23):
             frame.rowconfigure(i, pad=4)
         frame.columnconfigure(1, weight=1)
+
+        # React to accounts dir changes (typed or programmatic) by loading settings
+        self.accounts_dir_var.trace_add("write", self._on_accounts_dir_change)
 
     def _settings_path_for_accounts_dir(self, accounts_dir: str | None):
         if accounts_dir:
@@ -237,6 +245,10 @@ class UploadGUI:
 
     def _load_settings(self, accounts_dir: str | None = None, clear_current: bool = False, apply_account_defaults: bool = False):
         target_dir = accounts_dir or self.accounts_dir_var.get().strip() or None
+        # Prevent recursive trace-triggered loads
+        if self._loading_settings:
+            return
+        self._loading_settings = True
         if clear_current:
             self._reset_settings_fields()
         settings_path = self._settings_path_for_accounts_dir(target_dir)
@@ -245,11 +257,15 @@ class UploadGUI:
         except FileNotFoundError:
             if apply_account_defaults:
                 self._apply_account_folder_defaults(target_dir)
+            self._last_loaded_accounts_dir = target_dir
+            self._loading_settings = False
             return
         except Exception:
             # Ignore malformed settings to avoid blocking startup
             if apply_account_defaults:
                 self._apply_account_folder_defaults(target_dir)
+            self._last_loaded_accounts_dir = target_dir
+            self._loading_settings = False
             return
 
         self.accounts_dir_var.set(data.get("accounts_dir", target_dir or ""))
@@ -290,6 +306,20 @@ class UploadGUI:
                 pass
         if apply_account_defaults:
             self._apply_account_folder_defaults(target_dir)
+        self._last_loaded_accounts_dir = target_dir
+        self._loading_settings = False
+
+    def _on_video_path_change(self, *_):
+        if self._loading_settings:
+            return
+        raw = self.video_path_var.get() or ""
+        parts = [p.strip() for p in raw.replace("\r", "").replace("\n", ";").split(";") if p.strip()]
+        self.video_paths = parts
+        if parts:
+            self.videos_label.config(text=f"{len(parts)} file(s) selected")
+        else:
+            self.videos_label.config(text="No videos selected")
+        self._reset_progress_bars()
 
     def _save_settings(self):
         data = {
@@ -350,6 +380,17 @@ class UploadGUI:
             self.accounts_dir_var.set(path)
             # Load settings stored alongside the selected account folder
             self._load_settings(accounts_dir=path, clear_current=True, apply_account_defaults=True)
+
+    def _on_accounts_dir_change(self, *_):
+        path = (self.accounts_dir_var.get() or "").strip()
+        if not path:
+            return
+        # Avoid reloading the same folder repeatedly or re-entrancy
+        if self._loading_settings or path == self._last_loaded_accounts_dir:
+            return
+        if not Path(path).is_dir():
+            return
+        self._load_settings(accounts_dir=path, clear_current=True, apply_account_defaults=True)
 
     def _setup_drag_and_drop(self):
         if TkinterDnD and DND_FILES:

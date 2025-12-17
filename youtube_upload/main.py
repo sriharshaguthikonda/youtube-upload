@@ -232,6 +232,9 @@ def _find_existing_video(youtube, title=None, hash_tag=None, max_results=5):
         if hash_tag:
             # Hash search already acts as the match
             return video_id
+        snippet = item.get("snippet", {})
+        if title and snippet.get("title") == title:
+            return video_id
 
 
 def create_internet_shortcut(video_path, video_url):
