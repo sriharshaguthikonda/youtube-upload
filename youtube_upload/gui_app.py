@@ -29,7 +29,8 @@ class UploadGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("YouTube Upload GUI")
-        self.palette = gui_theme.apply_dark_theme(self.root)
+        self.theme_var = tk.StringVar(value="dark")
+        self.palette = gui_theme.apply_theme(self.root, mode=self.theme_var.get())
 
         self.video_paths = []
         self.thumbnail_path = None
@@ -153,10 +154,19 @@ class UploadGUI:
         self.always_on_top_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(frame, text="Keep window on top", variable=self.always_on_top_var, command=self._apply_topmost).grid(row=17, column=1, sticky="w")
 
+        # Theme toggle
+        ttk.Label(frame, text="Theme").grid(row=18, column=0, sticky="w")
+        ttk.Combobox(
+            frame,
+            textvariable=self.theme_var,
+            values=["dark", "light"],
+            state="readonly",
+        ).grid(row=18, column=1, sticky="w")
+
         # Video selector
-        ttk.Label(frame, text="Choose Video(s)*").grid(row=18, column=0, sticky="w")
+        ttk.Label(frame, text="Choose Video(s)*").grid(row=19, column=0, sticky="w")
         videos_frame = ttk.Frame(frame)
-        videos_frame.grid(row=18, column=1, sticky="ew")
+        videos_frame.grid(row=19, column=1, sticky="ew")
         self.video_path_var = tk.StringVar()
         ttk.Entry(videos_frame, textvariable=self.video_path_var, width=40).grid(row=0, column=0, sticky="ew")
         ttk.Button(videos_frame, text="Browse Files", command=self._choose_videos).grid(row=0, column=1, padx=6)
@@ -169,24 +179,24 @@ class UploadGUI:
 
         # Upload/cancel buttons
         buttons = ttk.Frame(frame)
-        buttons.grid(row=19, column=1, sticky="e", pady=8)
+        buttons.grid(row=20, column=1, sticky="e", pady=8)
         self.upload_button = ttk.Button(buttons, text="Upload", command=self._upload)
         self.upload_button.grid(row=0, column=0, padx=(0, 6))
         self.cancel_button = ttk.Button(buttons, text="Cancel", command=self._cancel_upload, state="disabled")
         self.cancel_button.grid(row=0, column=1)
 
         # Progress area
-        ttk.Separator(frame, orient="horizontal").grid(row=20, column=0, columnspan=2, sticky="ew", pady=(8, 4))
-        ttk.Label(frame, text="Upload Progress").grid(row=21, column=0, sticky="nw")
+        ttk.Separator(frame, orient="horizontal").grid(row=21, column=0, columnspan=2, sticky="ew", pady=(8, 4))
+        ttk.Label(frame, text="Upload Progress").grid(row=22, column=0, sticky="nw")
         self.progress_container = ttk.Frame(frame)
-        self.progress_container.grid(row=21, column=1, sticky="nsew")
+        self.progress_container.grid(row=22, column=1, sticky="nsew")
         self.progress_container.columnconfigure(1, weight=1)
 
         # Log pane
-        ttk.Separator(frame, orient="horizontal").grid(row=22, column=0, columnspan=2, sticky="ew", pady=(8, 4))
-        ttk.Label(frame, text="Status / Log").grid(row=23, column=0, sticky="nw")
+        ttk.Separator(frame, orient="horizontal").grid(row=23, column=0, columnspan=2, sticky="ew", pady=(8, 4))
+        ttk.Label(frame, text="Status / Log").grid(row=24, column=0, sticky="nw")
         log_frame = ttk.Frame(frame)
-        log_frame.grid(row=23, column=1, sticky="nsew")
+        log_frame.grid(row=24, column=1, sticky="nsew")
         self.log_text = tk.Text(log_frame, width=60, height=8, wrap="word", state="disabled")
         scrollbar = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=scrollbar.set)
@@ -196,12 +206,14 @@ class UploadGUI:
         log_frame.rowconfigure(0, weight=1)
         gui_theme.style_text_widget(self.log_text, self.palette)
 
-        for i in range(0, 25):
+        for i in range(0, 26):
             frame.rowconfigure(i, pad=4)
         frame.columnconfigure(1, weight=1)
 
         # React to accounts dir changes (typed or programmatic) by loading settings
         self.accounts_dir_var.trace_add("write", self._on_accounts_dir_change)
+        # React to theme changes
+        self.theme_var.trace_add("write", self._on_theme_change)
 
     def _settings_path_for_accounts_dir(self, accounts_dir: str | None):
         if accounts_dir:
@@ -217,6 +229,7 @@ class UploadGUI:
         self.privacy_var.set("public")
         self.publish_at_var.set("")
         self.skip_if_exists_var.set("hash")
+        self.theme_var.set("dark")
         self.secrets_var.set("")
         self.credentials_var.set("")
         self.account_var.set("")
@@ -288,6 +301,7 @@ class UploadGUI:
         self.privacy_var.set(data.get("privacy", "public"))
         self.publish_at_var.set(data.get("publish_at", ""))
         self.skip_if_exists_var.set(data.get("skip_if_exists", "hash"))
+        self.theme_var.set(data.get("theme", "dark"))
         self.secrets_var.set(data.get("secrets_path", ""))
         self.credentials_var.set(data.get("credentials_path", ""))
         self.account_var.set(data.get("account", ""))
@@ -322,6 +336,7 @@ class UploadGUI:
                 pass
         if apply_account_defaults:
             self._apply_account_folder_defaults(target_dir)
+        self._apply_theme_from_var()
         self._last_loaded_accounts_dir = target_dir
         self._loading_settings = False
         # Apply after loading; run once immediately and once after idle so Tk has realized.
@@ -348,6 +363,18 @@ class UploadGUI:
         else:
             self.videos_label.config(text="No supported videos selected")
         self._reset_progress_bars()
+        self._save_settings()
+
+    def _apply_theme_from_var(self, *_):
+        mode = self.theme_var.get() or "dark"
+        self.palette = gui_theme.apply_theme(self.root, mode=mode)
+        gui_theme.style_text_widget(self.description_text, self.palette)
+        gui_theme.style_text_widget(self.log_text, self.palette)
+
+    def _on_theme_change(self, *_):
+        if self._loading_settings:
+            return
+        self._apply_theme_from_var()
 
     def _save_settings(self):
         data = {
@@ -356,6 +383,7 @@ class UploadGUI:
             "privacy": self.privacy_var.get(),
             "publish_at": self.publish_at_var.get(),
             "skip_if_exists": self.skip_if_exists_var.get(),
+            "theme": self.theme_var.get(),
             "secrets_path": self.secrets_var.get(),
             "credentials_path": self.credentials_var.get(),
             "account": self.account_var.get(),

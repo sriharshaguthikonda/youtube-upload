@@ -15,10 +15,23 @@ PALETTE = {
     "danger": "#ff6b6b",
 }
 
+LIGHT_PALETTE = {
+    "bg": "#f4f6fb",
+    "surface": "#ffffff",
+    "sunken": "#e8ecf4",
+    "fg": "#0f172a",
+    "muted": "#4b5563",
+    "accent": "#2563eb",
+    "accent_alt": "#3b82f6",
+    "border": "#cbd5e1",
+    "focus": "#3b82f6",
+    "danger": "#dc2626",
+}
 
-def apply_dark_theme(root):
-    """Apply a reusable dark theme to the given root window."""
-    palette = PALETTE
+
+def apply_theme(root, mode: str = "dark"):
+    """Apply a reusable theme to the given root window."""
+    palette = PALETTE if mode == "dark" else LIGHT_PALETTE
     style = ttk.Style(root)
     try:
         style.theme_use("clam")
@@ -97,6 +110,11 @@ def apply_dark_theme(root):
     )
 
     return palette
+
+
+def apply_dark_theme(root):
+    """Apply the dark theme (backward compatible helper)."""
+    return apply_theme(root, mode="dark")
 
 
 def style_text_widget(widget, palette=None):
