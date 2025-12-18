@@ -412,7 +412,12 @@ def run_main(parser, options, args, output=sys.stdout):
 
         if youtube:
             for index, video_path in enumerate(args):
-                video_id = upload_youtube_video(youtube, options, video_path, len(args), index)
+                try:
+                    video_id = upload_youtube_video(youtube, options, video_path, len(args), index)
+                except InvalidVideoFormat as exc:
+                    debug(f"[SKIP] {video_path}: {exc}")
+                    continue
+
                 video_url = WATCH_VIDEO_URL.format(id=video_id)
                 debug("Video URL: {0}".format(video_url))
                 if options.open_link:

@@ -23,6 +23,7 @@ if str(PARENT) not in sys.path:
     sys.path.insert(0, str(PARENT))
 from youtube_upload import gui_app_files, gui_theme  # ruff: noqa: E402
 import youtube_upload.main as cli_main  # ruff: noqa: E402
+import youtube_upload.content_validation as content_validation  # ruff: noqa: E402
 
 
 class UploadGUI:
@@ -38,6 +39,7 @@ class UploadGUI:
         self._uploading = False
         self.cancel_event = threading.Event()
         self._log_lines = 0
+        self._error_lines = 0
         self._loading_settings = False
         self._last_loaded_accounts_dir: str | None = None
 
@@ -205,6 +207,20 @@ class UploadGUI:
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
         gui_theme.style_text_widget(self.log_text, self.palette)
+
+        # Errors pane
+        ttk.Separator(frame, orient="horizontal").grid(row=25, column=0, columnspan=2, sticky="ew", pady=(8, 4))
+        ttk.Label(frame, text="Errors (skipped files)").grid(row=26, column=0, sticky="nw")
+        errors_frame = ttk.Frame(frame)
+        errors_frame.grid(row=26, column=1, sticky="nsew")
+        self.errors_text = tk.Text(errors_frame, width=60, height=6, wrap="word", state="disabled", foreground="#ff8080")
+        errors_scroll = ttk.Scrollbar(errors_frame, orient="vertical", command=self.errors_text.yview)
+        self.errors_text.configure(yscrollcommand=errors_scroll.set)
+        self.errors_text.grid(row=0, column=0, sticky="nsew")
+        errors_scroll.grid(row=0, column=1, sticky="ns")
+        errors_frame.columnconfigure(0, weight=1)
+        errors_frame.rowconfigure(0, weight=1)
+        gui_theme.style_text_widget(self.errors_text, self.palette)
 
         for i in range(0, 26):
             frame.rowconfigure(i, pad=4)
@@ -545,6 +561,44 @@ class UploadGUI:
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
 
+    def _validate_video_content_list(self) -> bool:
+        """Validate per-file content; log and drop invalid files instead of aborting."""
+        if not self.video_paths:
+            return False
+        invalid_paths: list[str] = []
+        for path in list(self.video_paths):
+            try:
+                cli_main.validate_video_format(path)
+                content_validation.validate_video_content(path)
+            except Exception as exc:
+                invalid_paths.append(path)
+                self._log_error(f"{Path(path).name}: {exc}")
+        if invalid_paths:
+            self._log(f"Skipping {len(invalid_paths)} invalid file(s).")
+            self.video_paths = [p for p in self.video_paths if p not in invalid_paths]
+            if self.video_paths:
+                self.video_path_var.set("; ".join(self.video_paths))
+                self.videos_label.config(text=f"{len(self.video_paths)} supported file(s) selected")
+                self._reset_progress_bars()
+            else:
+                self.video_path_var.set("")
+                self.videos_label.config(text="No supported videos selected")
+        return bool(self.video_paths)
+
+    def _clear_errors(self):
+        self._error_lines = 0
+        self.errors_text.configure(state="normal")
+        self.errors_text.delete("1.0", "end")
+        self.errors_text.configure(state="disabled")
+
+    def _log_error(self, message):
+        self._error_lines += 1
+        prefix = f"[{self._error_lines:03d}] "
+        self.errors_text.configure(state="normal")
+        self.errors_text.insert("end", prefix + str(message) + "\n")
+        self.errors_text.see("end")
+        self.errors_text.configure(state="disabled")
+
     def _reset_progress_bars(self):
         # Clear previous progress widgets
         for child in self.progress_container.winfo_children():
@@ -639,9 +693,13 @@ class UploadGUI:
         if self._uploading:
             messagebox.showinfo("Upload in progress", "An upload is already running.")
             return
+        self._clear_errors()
         errors = self._validate_fields()
         if errors:
             messagebox.showerror("Invalid fields", "\n\n".join(errors))
+            return
+        if not self._validate_video_content_list():
+            messagebox.showerror("Invalid videos", "All selected files were invalid or unsupported.")
             return
         # Ensure playlist gets populated before constructing CLI args
         self._ensure_playlist_default()
