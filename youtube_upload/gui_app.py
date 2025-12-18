@@ -272,6 +272,7 @@ class UploadGUI:
         self.publish_at_var.set("")
         self.skip_if_exists_var.set("hash")
         self.theme_var.set("dark")
+        self.playlist_var.set("")
         self.secrets_var.set("")
         self.credentials_var.set("")
         self.account_var.set("")
@@ -291,13 +292,24 @@ class UploadGUI:
         if not accounts_dir:
             return
         base = Path(accounts_dir)
-        secrets_candidate = base / "client_secrets.json"
-        if secrets_candidate.exists():
-            self.secrets_var.set(str(secrets_candidate))
-        for cred_name in [".youtube-upload-credentials.json", "credentials.json"]:
-            cred_candidate = base / cred_name
-            if cred_candidate.exists():
-                self.credentials_var.set(str(cred_candidate))
+        secret_candidates = [
+            base / "client_secrets.json",
+            *sorted(base.glob("client_secret*.json")),
+            *sorted(base.glob("client_secrets*.json")),
+        ]
+        for candidate in secret_candidates:
+            if candidate.exists():
+                self.secrets_var.set(str(candidate))
+                break
+
+        cred_candidates = [
+            base / ".youtube-upload-credentials.json",
+            base / "credentials.json",
+            *sorted(p for p in base.glob("*credentials*.json") if p.name != "gui_settings.json"),
+        ]
+        for candidate in cred_candidates:
+            if candidate.exists():
+                self.credentials_var.set(str(candidate))
                 break
         if not self.account_var.get():
             self.account_var.set(base.name)
@@ -317,6 +329,9 @@ class UploadGUI:
             if apply_account_defaults:
                 self._apply_account_folder_defaults(target_dir)
             self._last_loaded_accounts_dir = target_dir
+            if apply_account_defaults:
+                # Persist discovered defaults (client_secrets/credentials) alongside the account dir
+                self._save_settings()
             self._loading_settings = False
             return
         except Exception:
@@ -324,6 +339,8 @@ class UploadGUI:
             if apply_account_defaults:
                 self._apply_account_folder_defaults(target_dir)
             self._last_loaded_accounts_dir = target_dir
+            if apply_account_defaults:
+                self._save_settings()
             self._loading_settings = False
             return
 
@@ -381,6 +398,8 @@ class UploadGUI:
             self._apply_account_folder_defaults(target_dir)
         self._apply_theme_from_var()
         self._last_loaded_accounts_dir = target_dir
+        if apply_account_defaults and not self._loading_settings:
+            self._save_settings()
         self._loading_settings = False
         # Apply after loading; run once immediately and once after idle so Tk has realized.
         self._apply_topmost()

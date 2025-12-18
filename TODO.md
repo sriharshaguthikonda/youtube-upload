@@ -31,7 +31,7 @@
 
 
 
-5. [ ] ** content validation** - check the content of the file as well as in if it is an mp4 video there should be some mp4 content in the video.
+5. [x] ** content validation** - check the content of the file as well as in if it is an mp4 video there should be some mp4 content in the video.
 
 6. [ ] **playlist verification** - if the folder name matches an existing playlist, add the upload there; create if missing.
 
