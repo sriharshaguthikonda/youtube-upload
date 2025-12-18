@@ -35,6 +35,7 @@ from . import upload_video
 from . import categories
 from . import lib
 from . import playlists
+from . import content_validation
 
 # http://code.google.com/p/python-progressbar (>= 2.3)
 try:
@@ -260,6 +261,7 @@ def create_internet_shortcut(video_path, video_url):
 def upload_youtube_video(youtube, options, video_path, total_videos, index):
     """Upload video with index (for split videos)."""
     validate_video_format(video_path)
+    content_validation.validate_video_content(video_path)
     u = lib.to_utf8
     base_title = options.title or default_title_from_video_path(video_path)
     title = u(base_title)

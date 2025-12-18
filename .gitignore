@@ -69,3 +69,7 @@ youtube_upload/.youtube-upload-credentials.json
 youtube_upload/*/.youtube-upload-credentials.json
 *.youtube-upload-credentials.json
 youtube_upload/*/*.json
+
+
+
+youtube_upload/*/gui_settings.json
