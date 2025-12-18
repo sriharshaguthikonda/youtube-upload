@@ -431,6 +431,9 @@ class UploadGUI:
         if supported:
             self.video_path_var.set("; ".join(self.video_paths))
             self.videos_label.config(text=f"{len(self.video_paths)} supported file(s) selected")
+            if not self.playlist_var.get().strip():
+                # Default playlist to the selected folder name for convenience
+                self.playlist_var.set(Path(path).name)
         else:
             self.video_path_var.set("")
             self.videos_label.config(text="No supported videos selected")
