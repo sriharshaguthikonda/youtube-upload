@@ -49,10 +49,36 @@ class UploadGUI:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_form(self):
-        frame = ttk.Frame(self.root, padding=12)
-        frame.grid(row=0, column=0, sticky="nsew")
+        # Scrollable container to keep logs/errors reachable when many uploads are listed
+        container = ttk.Frame(self.root)
+        container.grid(row=0, column=0, sticky="nsew")
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
+
+        canvas = tk.Canvas(container, highlightthickness=0, background=self.palette["bg"])
+        vscroll = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vscroll.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        vscroll.grid(row=0, column=1, sticky="ns")
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(0, weight=1)
+
+        frame = ttk.Frame(canvas, padding=12)
+        self._content_window = canvas.create_window((0, 0), window=frame, anchor="nw")
+
+        def _update_scroll_region(event=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            canvas.itemconfigure(self._content_window, width=canvas.winfo_width())
+
+        frame.bind("<Configure>", _update_scroll_region)
+        canvas.bind("<Configure>", _update_scroll_region)
+
+        def _on_mousewheel(event):
+            delta = -1 * int(event.delta / 120) if event.delta else 0
+            canvas.yview_scroll(delta, "units")
+
+        # Enable mouse wheel scrolling (Windows / most platforms)
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
 
         # Title (optional; defaults to filename)
         ttk.Label(frame, text="Title (optional)").grid(row=0, column=0, sticky="w")

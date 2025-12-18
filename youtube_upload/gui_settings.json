@@ -1,0 +1,20 @@
+{
+  "category": "",
+  "privacy": "public",
+  "publish_at": "",
+  "skip_if_exists": "hash",
+  "theme": "dark",
+  "playlist": "BIOSTATISTICS UW",
+  "secrets_path": "",
+  "credentials_path": "",
+  "account": "youtube_upload",
+  "accounts": "",
+  "accounts_dir": "C:\\Windows_software\\youtube-upload\\youtube_upload\\",
+  "auth_browser": false,
+  "open_link": false,
+  "debug": false,
+  "always_on_top": false,
+  "thumbnail_path": null,
+  "video_paths": [],
+  "geometry": "858x1412+4130+430"
+}
