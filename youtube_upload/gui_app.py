@@ -302,6 +302,7 @@ class UploadGUI:
         self.publish_at_var.set(data.get("publish_at", ""))
         self.skip_if_exists_var.set(data.get("skip_if_exists", "hash"))
         self.theme_var.set(data.get("theme", "dark"))
+        self.playlist_var.set(data.get("playlist", ""))
         self.secrets_var.set(data.get("secrets_path", ""))
         self.credentials_var.set(data.get("credentials_path", ""))
         self.account_var.set(data.get("account", ""))
@@ -364,6 +365,7 @@ class UploadGUI:
             self.videos_label.config(text="No supported videos selected")
         self._reset_progress_bars()
         self._save_settings()
+        self._ensure_playlist_default()
 
     def _apply_theme_from_var(self, *_):
         mode = self.theme_var.get() or "dark"
@@ -376,6 +378,20 @@ class UploadGUI:
             return
         self._apply_theme_from_var()
 
+    def _ensure_playlist_default(self):
+        """If playlist is empty, default to folder name of first video (parent dir)."""
+        if self.playlist_var.get().strip():
+            return
+        if not self.video_paths:
+            return
+        first = Path(self.video_paths[0])
+        parent_name = first.parent.name
+        if parent_name:
+            self.playlist_var.set(parent_name)
+        else:
+            # Fallback default when no parent folder name is available
+            self.playlist_var.set("Uploads")
+
     def _save_settings(self):
         data = {
             "category": self.category_var.get(),
@@ -384,6 +400,7 @@ class UploadGUI:
             "publish_at": self.publish_at_var.get(),
             "skip_if_exists": self.skip_if_exists_var.get(),
             "theme": self.theme_var.get(),
+            "playlist": self.playlist_var.get(),
             "secrets_path": self.secrets_var.get(),
             "credentials_path": self.credentials_var.get(),
             "account": self.account_var.get(),
@@ -420,6 +437,7 @@ class UploadGUI:
             else:
                 self.videos_label.config(text="No supported videos selected")
             self._reset_progress_bars()
+            self._ensure_playlist_default()
 
     def _choose_thumbnail(self):
         path = filedialog.askopenfilename(title="Select thumbnail (JPEG/PNG)")
@@ -466,6 +484,7 @@ class UploadGUI:
             self.video_path_var.set("")
             self.videos_label.config(text="No supported videos selected")
         self._reset_progress_bars()
+        self._ensure_playlist_default()
 
     def _on_accounts_dir_change(self, *_):
         path = (self.accounts_dir_var.get() or "").strip()
@@ -516,6 +535,7 @@ class UploadGUI:
             self.videos_label.config(text="No supported videos selected")
             self._log("No supported videos found in dropped items.")
         self._reset_progress_bars()
+        self._ensure_playlist_default()
 
     def _log(self, message):
         self._log_lines += 1
@@ -623,6 +643,8 @@ class UploadGUI:
         if errors:
             messagebox.showerror("Invalid fields", "\n\n".join(errors))
             return
+        # Ensure playlist gets populated before constructing CLI args
+        self._ensure_playlist_default()
         title = self.title_var.get().strip()
         self._reset_progress_bars()
 
