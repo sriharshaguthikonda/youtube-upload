@@ -439,6 +439,12 @@ class UploadGUI:
             return
         self._apply_theme_from_var()
 
+    def _clear_video_selection(self):
+        self.video_paths = []
+        self.video_path_var.set("")
+        self.videos_label.config(text="No videos selected")
+        self._reset_progress_bars()
+
     def _ensure_playlist_default(self):
         """If playlist is empty, default to folder name of first video (parent dir)."""
         if self.playlist_var.get().strip():
@@ -522,6 +528,8 @@ class UploadGUI:
             self.accounts_dir_var.set(path)
             # Load settings stored alongside the selected account folder
             self._load_settings(accounts_dir=path, clear_current=True, apply_account_defaults=True)
+            # Always reset video selection when switching accounts
+            self._clear_video_selection()
 
     def _choose_video_folder(self):
         path = filedialog.askdirectory(title="Select folder containing videos")
