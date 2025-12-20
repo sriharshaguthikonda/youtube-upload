@@ -30,8 +30,27 @@ def create_playlist(youtube, title, privacy):
     }).execute()
     return response.get("id")
 
+def video_in_playlist(youtube, playlist_id, video_id):
+    """Return True if the video is already in the playlist."""
+    playlist_items = youtube.playlistItems()
+    request = playlist_items.list(
+        part="id",
+        playlistId=playlist_id,
+        videoId=video_id,
+        maxResults=1,
+    )
+    while request:
+        results = request.execute()
+        if results.get("items"):
+            return True
+        request = playlist_items.list_next(request, results)
+    return False
+
 def add_video_to_existing_playlist(youtube, playlist_id, video_id):
     """Add video to playlist (by identifier) and return the playlist ID."""
+    if video_in_playlist(youtube, playlist_id, video_id):
+        debug("Video already in playlist: {0}".format(video_id))
+        return None
     debug("Adding video to playlist: {0}".format(playlist_id))
     return youtube.playlistItems().insert(part="snippet", body={
         "snippet": {
