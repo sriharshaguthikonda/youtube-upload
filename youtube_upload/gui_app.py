@@ -42,6 +42,7 @@ class UploadGUI:
         self._error_lines = 0
         self._loading_settings = False
         self._last_loaded_accounts_dir: str | None = None
+        self.accounts_dir_history: list[str] = []
 
         self._build_form()
         self._load_settings()
@@ -166,8 +167,12 @@ class UploadGUI:
         accounts_dir_frame = ttk.Frame(frame)
         accounts_dir_frame.grid(row=13, column=1, sticky="ew")
         self.accounts_dir_var = tk.StringVar()
-        self.accounts_dir_entry = ttk.Entry(accounts_dir_frame, textvariable=self.accounts_dir_var)
-        self.accounts_dir_entry.grid(row=0, column=0, sticky="ew")
+        self.accounts_dir_combo = ttk.Combobox(
+            accounts_dir_frame,
+            textvariable=self.accounts_dir_var,
+            values=self.accounts_dir_history,
+        )
+        self.accounts_dir_combo.grid(row=0, column=0, sticky="ew")
         ttk.Button(accounts_dir_frame, text="Browse", command=self._choose_accounts_dir).grid(row=0, column=1, padx=6)
         accounts_dir_frame.columnconfigure(0, weight=1)
 
@@ -210,8 +215,9 @@ class UploadGUI:
         buttons.grid(row=20, column=1, sticky="e", pady=8)
         self.upload_button = ttk.Button(buttons, text="Upload", command=self._upload)
         self.upload_button.grid(row=0, column=0, padx=(0, 6))
+        ttk.Button(buttons, text="Save settings", command=self._manual_save_settings).grid(row=0, column=1, padx=(0, 6))
         self.cancel_button = ttk.Button(buttons, text="Cancel", command=self._cancel_upload, state="disabled")
-        self.cancel_button.grid(row=0, column=1)
+        self.cancel_button.grid(row=0, column=2)
 
         # Progress area
         ttk.Separator(frame, orient="horizontal").grid(row=21, column=0, columnspan=2, sticky="ew", pady=(8, 4))
@@ -277,6 +283,7 @@ class UploadGUI:
         self.credentials_var.set("")
         self.account_var.set("")
         self.accounts_var.set("")
+        self.accounts_dir_var.set("")
         self.auth_browser_var.set(False)
         self.open_link_var.set(False)
         self.debug_var.set(False)
@@ -329,16 +336,18 @@ class UploadGUI:
             if apply_account_defaults:
                 self._apply_account_folder_defaults(target_dir)
             self._last_loaded_accounts_dir = target_dir
+            self._set_accounts_dir_history([])
             if apply_account_defaults:
                 # Persist discovered defaults (client_secrets/credentials) alongside the account dir
                 self._save_settings()
             self._loading_settings = False
             return
-        except Exception:
+        except json.JSONDecodeError:
             # Ignore malformed settings to avoid blocking startup
             if apply_account_defaults:
                 self._apply_account_folder_defaults(target_dir)
             self._last_loaded_accounts_dir = target_dir
+            self._set_accounts_dir_history([])
             if apply_account_defaults:
                 self._save_settings()
             self._loading_settings = False
@@ -367,6 +376,7 @@ class UploadGUI:
         self.account_var.set(data.get("account", ""))
         self.accounts_var.set(data.get("accounts", ""))
         self.accounts_dir_var.set(data.get("accounts_dir", ""))
+        self._set_accounts_dir_history(data.get("accounts_dir_history", []))
         self.auth_browser_var.set(bool(data.get("auth_browser", False)))
         self.open_link_var.set(bool(data.get("open_link", False)))
         self.debug_var.set(bool(data.get("debug", False)))
@@ -398,6 +408,8 @@ class UploadGUI:
             self._apply_account_folder_defaults(target_dir)
         self._apply_theme_from_var()
         self._last_loaded_accounts_dir = target_dir
+        if target_dir:
+            self._add_to_accounts_dir_history(target_dir)
         if apply_account_defaults and not self._loading_settings:
             self._save_settings()
         self._loading_settings = False
@@ -462,7 +474,6 @@ class UploadGUI:
     def _save_settings(self):
         data = {
             "category": self.category_var.get(),
-
             "privacy": self.privacy_var.get(),
             "publish_at": self.publish_at_var.get(),
             "skip_if_exists": self.skip_if_exists_var.get(),
@@ -473,6 +484,7 @@ class UploadGUI:
             "account": self.account_var.get(),
             "accounts": self.accounts_var.get(),
             "accounts_dir": self.accounts_dir_var.get(),
+            "accounts_dir_history": self.accounts_dir_history,
             "auth_browser": bool(self.auth_browser_var.get()),
             "open_link": bool(self.open_link_var.get()),
             "debug": bool(self.debug_var.get()),
@@ -480,13 +492,22 @@ class UploadGUI:
             "thumbnail_path": self.thumbnail_path,
             "video_paths": self.video_paths if self.video_paths else [],
             "geometry": self.root.winfo_geometry(),
-
         }
         try:
             self._settings_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            return True
         except Exception:
             # Failing to save settings should not crash the app
-            pass
+            return False
+
+    def _manual_save_settings(self):
+        success = self._save_settings()
+        if success:
+            self._log("Settings saved.")
+            messagebox.showinfo("Settings saved", "Settings have been saved.")
+        else:
+            self._log_error("Failed to save settings.")
+            messagebox.showerror("Save failed", "Could not save settings. Check file permissions or path.")
 
     def _on_close(self):
         self._save_settings()
@@ -565,6 +586,20 @@ class UploadGUI:
         if not Path(path).is_dir():
             return
         self._load_settings(accounts_dir=path, clear_current=True, apply_account_defaults=True)
+        self._add_to_accounts_dir_history(path)
+
+    def _set_accounts_dir_history(self, paths: list[str]):
+        self.accounts_dir_history = [p for p in paths if p]
+        self.accounts_dir_combo["values"] = self.accounts_dir_history
+
+    def _add_to_accounts_dir_history(self, path: str, max_items: int = 5):
+        if not path:
+            return
+        normalized = str(Path(path))
+        deduped = [p for p in self.accounts_dir_history if Path(p) != Path(normalized)]
+        deduped.insert(0, normalized)
+        self.accounts_dir_history = deduped[:max_items]
+        self.accounts_dir_combo["values"] = self.accounts_dir_history
 
     def _setup_drag_and_drop(self):
         if TkinterDnD and DND_FILES:
