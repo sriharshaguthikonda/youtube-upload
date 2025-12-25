@@ -27,9 +27,13 @@ import youtube_upload.content_validation as content_validation  # ruff: noqa: E4
 
 
 class UploadGUI:
+    MIN_WIDTH = 640
+    MIN_HEIGHT = 480
+
     def __init__(self, root):
         self.root = root
         self.root.title("YouTube Upload GUI")
+        self.root.minsize(self.MIN_WIDTH, self.MIN_HEIGHT)
         self.theme_var = tk.StringVar(value="dark")
         self.palette = gui_theme.apply_theme(self.root, mode=self.theme_var.get())
 
@@ -401,7 +405,7 @@ class UploadGUI:
         geometry = data.get("geometry")
         if geometry:
             try:
-                self.root.geometry(geometry)
+                self.root.geometry(self._normalize_geometry(geometry))
             except Exception:
                 pass
         if apply_account_defaults:
@@ -491,7 +495,7 @@ class UploadGUI:
             "always_on_top": bool(self.always_on_top_var.get()),
             "thumbnail_path": self.thumbnail_path,
             "video_paths": self.video_paths if self.video_paths else [],
-            "geometry": self.root.winfo_geometry(),
+            "geometry": self._normalize_geometry(self.root.winfo_geometry()),
         }
         try:
             self._settings_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -499,6 +503,26 @@ class UploadGUI:
         except Exception:
             # Failing to save settings should not crash the app
             return False
+
+    def _normalize_geometry(self, geometry: str) -> str:
+        """
+        Clamp geometry to a sensible minimum size and keep it within visible bounds.
+        This avoids restoring windows off-screen when monitor layouts change.
+        """
+        match = re.match(r"(\d+)x(\d+)\+(-?\d+)\+(-?\d+)", geometry)
+        if not match:
+            return geometry
+
+        width, height, x_pos, y_pos = map(int, match.groups())
+        width = max(width, self.MIN_WIDTH)
+        height = max(height, self.MIN_HEIGHT)
+
+        screen_w = max(self.root.winfo_screenwidth(), width)
+        screen_h = max(self.root.winfo_screenheight(), height)
+
+        x_pos = max(0, min(x_pos, screen_w - width))
+        y_pos = max(0, min(y_pos, screen_h - height))
+        return f"{width}x{height}+{x_pos}+{y_pos}"
 
     def _manual_save_settings(self):
         success = self._save_settings()
