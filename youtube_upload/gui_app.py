@@ -499,6 +499,15 @@ class UploadGUI:
         }
         try:
             self._settings_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            # Also persist a global pointer to the last used accounts dir so startup can reload it
+            accounts_dir = self.accounts_dir_var.get().strip()
+            if accounts_dir:
+                pointer_path = self._settings_path_for_accounts_dir(None)
+                pointer_payload = {
+                    "accounts_dir": accounts_dir,
+                    "accounts_dir_history": self.accounts_dir_history,
+                }
+                pointer_path.write_text(json.dumps(pointer_payload, indent=2), encoding="utf-8")
             return True
         except Exception:
             # Failing to save settings should not crash the app
