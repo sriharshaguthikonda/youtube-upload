@@ -52,6 +52,7 @@ class UploadGUI:
         self._load_settings()
         self._setup_drag_and_drop()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._main_thread = threading.current_thread()
 
     def _build_form(self):
         # Scrollable container to keep logs/errors reachable when many uploads are listed
@@ -675,12 +676,15 @@ class UploadGUI:
         self._ensure_playlist_default()
 
     def _log(self, message):
-        self._log_lines += 1
-        prefix = f"[{self._log_lines:03d}] "
-        self.log_text.configure(state="normal")
-        self.log_text.insert("end", prefix + str(message) + "\n")
-        self.log_text.see("end")
-        self.log_text.configure(state="disabled")
+        def _write():
+            self._log_lines += 1
+            prefix = f"[{self._log_lines:03d}] "
+            self.log_text.configure(state="normal")
+            self.log_text.insert("end", prefix + str(message) + "\n")
+            self.log_text.see("end")
+            self.log_text.configure(state="disabled")
+
+        self._run_on_ui_thread(_write)
 
     def _validate_video_content_list(self) -> bool:
         """Validate per-file content; log and drop invalid files instead of aborting."""
@@ -713,12 +717,15 @@ class UploadGUI:
         self.errors_text.configure(state="disabled")
 
     def _log_error(self, message):
-        self._error_lines += 1
-        prefix = f"[{self._error_lines:03d}] "
-        self.errors_text.configure(state="normal")
-        self.errors_text.insert("end", prefix + str(message) + "\n")
-        self.errors_text.see("end")
-        self.errors_text.configure(state="disabled")
+        def _write():
+            self._error_lines += 1
+            prefix = f"[{self._error_lines:03d}] "
+            self.errors_text.configure(state="normal")
+            self.errors_text.insert("end", prefix + str(message) + "\n")
+            self.errors_text.see("end")
+            self.errors_text.configure(state="disabled")
+
+        self._run_on_ui_thread(_write)
 
     def _reset_progress_bars(self):
         # Clear previous progress widgets
@@ -736,6 +743,12 @@ class UploadGUI:
             self.root.bell()
         except Exception:
             pass
+
+    def _run_on_ui_thread(self, func, *args, **kwargs):
+        if threading.current_thread() is self._main_thread:
+            func(*args, **kwargs)
+        else:
+            self.root.after(0, lambda: func(*args, **kwargs))
 
     def _apply_topmost(self):
         try:
@@ -908,8 +921,8 @@ class UploadGUI:
                 self._log(f"Upload failed: {exc}")
             finally:
                 self._uploading = False
-                self.upload_button.state(["!disabled"])
-                self.cancel_button.state(["disabled"])
+                self._run_on_ui_thread(lambda: self.upload_button.state(["!disabled"]))
+                self._run_on_ui_thread(lambda: self.cancel_button.state(["disabled"]))
 
         threading.Thread(target=_worker, daemon=True).start()
 

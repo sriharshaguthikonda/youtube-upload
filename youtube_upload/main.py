@@ -39,7 +39,7 @@ from . import content_validation
 
 # http://code.google.com/p/python-progressbar (>= 2.3)
 try:
-    import progressbar2
+    import progressbar2 as progressbar
 except ImportError:
     progressbar = None
 

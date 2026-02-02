@@ -109,3 +109,9 @@
 
 43.[ ] **i18n readiness** - keep UI strings centralizable for future localization (minimal scaffolding).
 
+44.[x] **progressbar import crash** - `get_progress_info` references `progressbar` even when `progressbar2` is installed, leading to NameError whenever the dependency is present; alias the import so CLI progress bars work instead of crashing.
+
+45.[x] **GUI thread safety** - upload worker and progress callbacks call `_log`/`_log_error` directly, mutating Tk widgets off the main thread and intermittently throwing Tk `RuntimeError`/hangs; route all UI updates through `root.after`.
+
+46.[ ] **Launcher path brittleness** - `Youtube_upload_app.bat` hardcodes `youtube-upload\\Scripts\\pythonw.exe`, so the GUI fails to start unless that specific venv exists; fall back to `py -m youtube_upload.gui_app` or auto-detect the interpreter.
+
