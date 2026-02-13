@@ -7,7 +7,7 @@ from typing import Callable
 from . import main
 
 
-def _read_head(path: Path, size: int = 512) -> bytes:
+def _read_head(path: Path, size: int = 4096) -> bytes:
     with path.open("rb") as handle:
         return handle.read(size)
 
@@ -22,7 +22,7 @@ def _contains_at(data: bytes, needle: bytes, offset: int) -> bool:
 
 def _check_mp4_like(data: bytes) -> bool:
     # MP4/QuickTime/3GP should contain an ftyp box near the beginning.
-    return _contains_at(data, b"ftyp", 4)
+    return _contains_at(data, b"ftyp", 4) or (b"ftyp" in data)
 
 
 def _check_webm(data: bytes) -> bool:
@@ -68,6 +68,9 @@ _SIGNATURE_CHECKS: dict[str, Callable[[bytes], bool]] = {
     "wmv": _check_asf_wmv,
 }
 
+def _matches_any_known_signature(data: bytes) -> bool:
+    return any(check(data) for check in _SIGNATURE_CHECKS.values())
+
 
 def validate_video_content(video_path: str, minimum_size_bytes: int = 1024) -> None:
     """
@@ -84,11 +87,17 @@ def validate_video_content(video_path: str, minimum_size_bytes: int = 1024) -> N
     data = _read_head(path)
     checker = _SIGNATURE_CHECKS.get(suffix)
     if checker:
-        if not checker(data):
-            raise main.InvalidVideoFormat(
-                f"Content of '{video_path}' does not look like a valid {suffix.upper()} video."
-            )
+        if checker(data):
+            return
+        # Allow other known video signatures even if the extension doesn't match.
+        if _matches_any_known_signature(data):
+            return
+        raise main.InvalidVideoFormat(
+            f"Content of '{video_path}' does not look like a valid {suffix.upper()} video."
+        )
     else:
+        if _matches_any_known_signature(data):
+            return
         # For less common extensions (hevc, h265, prores, cineform, dnxhr) perform a generic sanity check.
         if data.startswith(b"\x00\x00\x00\x00") or all(b == 0x00 for b in data[:16]):
             raise main.InvalidVideoFormat(

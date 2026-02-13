@@ -6,11 +6,25 @@ import random
 import time
 import signal
 from contextlib import contextmanager
+import threading
 
 import googleapiclient.errors
 
 @contextmanager
 def default_sigint():
+    """
+    Temporarily restore the default SIGINT handler.
+
+    Tk/GUI flows run CLI work on a background thread; calling signal.signal
+    outside the main thread raises "signal only works in main thread".
+    If we're not on the main thread, skip changing handlers to keep the
+    worker thread happy while preserving main-thread behavior elsewhere.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        # No-op when called off the main thread to avoid RuntimeError.
+        yield
+        return
+
     original_sigint_handler = signal.getsignal(signal.SIGINT)
     signal.signal(signal.SIGINT, signal.SIG_DFL)
     try:

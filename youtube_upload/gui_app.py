@@ -6,9 +6,10 @@ import re
 import sys
 import threading
 import tkinter as tk
+import webbrowser
 from datetime import datetime
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD  # type: ignore
@@ -62,6 +63,7 @@ class UploadGUI:
         self.root.rowconfigure(0, weight=1)
 
         canvas = tk.Canvas(container, highlightthickness=0, background=self.palette["bg"])
+        self._canvas = canvas
         vscroll = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=vscroll.set)
         canvas.grid(row=0, column=0, sticky="nsew")
@@ -70,11 +72,19 @@ class UploadGUI:
         container.rowconfigure(0, weight=1)
 
         frame = ttk.Frame(canvas, padding=12)
+        self._content_frame = frame
         self._content_window = canvas.create_window((0, 0), window=frame, anchor="nw")
 
         def _update_scroll_region(event=None):
+            canvas.update_idletasks()
             canvas.configure(scrollregion=canvas.bbox("all"))
-            canvas.itemconfigure(self._content_window, width=canvas.winfo_width())
+            content_height = frame.winfo_reqheight()
+            target_height = max(content_height, canvas.winfo_height())
+            canvas.itemconfigure(
+                self._content_window,
+                width=canvas.winfo_width(),
+                height=target_height,
+            )
 
         frame.bind("<Configure>", _update_scroll_region)
         canvas.bind("<Configure>", _update_scroll_region)
@@ -259,9 +269,11 @@ class UploadGUI:
         errors_frame.rowconfigure(0, weight=1)
         gui_theme.style_text_widget(self.errors_text, self.palette)
 
-        for i in range(0, 26):
+        for i in range(0, 27):
             frame.rowconfigure(i, pad=4)
         frame.columnconfigure(1, weight=1)
+        for row in (22, 24, 26):
+            frame.rowconfigure(row, weight=1)
 
         # React to accounts dir changes (typed or programmatic) by loading settings
         self.accounts_dir_var.trace_add("write", self._on_accounts_dir_change)
@@ -402,6 +414,7 @@ class UploadGUI:
             self.video_paths = videos
             self.video_path_var.set("; ".join(self.video_paths))
             self.videos_label.config(text=f"{len(self.video_paths)} file(s) selected")
+        self._ensure_playlist_default()
 
         geometry = data.get("geometry")
         if geometry:
@@ -415,9 +428,10 @@ class UploadGUI:
         self._last_loaded_accounts_dir = target_dir
         if target_dir:
             self._add_to_accounts_dir_history(target_dir)
-        if apply_account_defaults and not self._loading_settings:
-            self._save_settings()
+        # Mark loading complete before any follow-up saves so guards are not tripped.
         self._loading_settings = False
+        if apply_account_defaults:
+            self._save_settings()
         # Apply after loading; run once immediately and once after idle so Tk has realized.
         self._apply_topmost()
         self.root.after_idle(self._apply_topmost)
@@ -442,12 +456,14 @@ class UploadGUI:
         else:
             self.videos_label.config(text="No supported videos selected")
         self._reset_progress_bars()
-        self._save_settings()
         self._ensure_playlist_default()
+        self._save_settings()
 
     def _apply_theme_from_var(self, *_):
         mode = self.theme_var.get() or "dark"
         self.palette = gui_theme.apply_theme(self.root, mode=mode)
+        if hasattr(self, "_canvas"):
+            self._canvas.configure(background=self.palette["bg"])
         gui_theme.style_text_widget(self.description_text, self.palette)
         gui_theme.style_text_widget(self.log_text, self.palette)
 
@@ -463,18 +479,14 @@ class UploadGUI:
         self._reset_progress_bars()
 
     def _ensure_playlist_default(self):
-        """If playlist is empty, default to folder name of first video (parent dir)."""
-        if self.playlist_var.get().strip():
-            return
+        """Keep playlist synced to the folder name of the first selected video."""
         if not self.video_paths:
+            self.playlist_var.set("")
             return
         first = Path(self.video_paths[0])
-        parent_name = first.parent.name
-        if parent_name:
+        parent_name = first.parent.name or "Uploads"
+        if self.playlist_var.get() != parent_name:
             self.playlist_var.set(parent_name)
-        else:
-            # Fallback default when no parent folder name is available
-            self.playlist_var.set("Uploads")
 
     def _save_settings(self):
         data = {
@@ -601,9 +613,6 @@ class UploadGUI:
         if supported:
             self.video_path_var.set("; ".join(self.video_paths))
             self.videos_label.config(text=f"{len(self.video_paths)} supported file(s) selected")
-            if not self.playlist_var.get().strip():
-                # Default playlist to the selected folder name for convenience
-                self.playlist_var.set(Path(path).name)
         else:
             self.video_path_var.set("")
             self.videos_label.config(text="No supported videos selected")
@@ -750,6 +759,40 @@ class UploadGUI:
         else:
             self.root.after(0, lambda: func(*args, **kwargs))
 
+    def _prompt_auth_code(self, authorize_url: str):
+        """
+        GUI-friendly replacement for console.get_code. Runs on the UI thread,
+        opens the auth page, and prompts the user to paste the returned code.
+        """
+        result: dict[str, str | None] = {"code": None}
+        done = threading.Event()
+
+        def _ask():
+            try:
+                # Help users by opening the URL and copying it to the clipboard.
+                webbrowser.open(authorize_url)
+                self.root.clipboard_clear()
+                self.root.clipboard_append(authorize_url)
+            except Exception:
+                pass
+            message = (
+                "A browser window has been opened for Google authentication.\n\n"
+                "1) Sign in and allow access.\n"
+                "2) Copy the verification code Google shows.\n"
+                "3) Paste the code below."
+            )
+            code = simpledialog.askstring(
+                "Google Authentication",
+                f"{message}\n\nAuthorization URL:\n{authorize_url}",
+                parent=self.root,
+            )
+            result["code"] = code.strip() if code else None
+            done.set()
+
+        self._run_on_ui_thread(_ask)
+        done.wait()
+        return result["code"]
+
     def _apply_topmost(self):
         try:
             self.root.wm_attributes("-topmost", bool(self.always_on_top_var.get()))
@@ -895,6 +938,9 @@ class UploadGUI:
             args += ["--skip-if-exists", skip_if_exists]
 
         full_args = args + self.video_paths
+
+        # Ensure OAuth console flow uses a GUI prompt instead of stdin.
+        cli_main.auth.console.get_code = self._prompt_auth_code
 
         self._uploading = True
         self.cancel_event.clear()

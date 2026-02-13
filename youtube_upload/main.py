@@ -395,6 +395,16 @@ def parse_options_error(parser, options):
 
 def run_main(parser, options, args, output=sys.stdout):
     """Run the main scripts from the parsed options/args."""
+    # When launched via pythonw (GUI), sys.stdout can be None; guard writes.
+    if output is None:
+        class _NullWriter:
+            def write(self, *_args, **_kwargs):
+                return None
+
+            def flush(self):
+                return None
+
+        output = _NullWriter()
     parse_options_error(parser, options)
     account_labels = []
     if options.accounts:
