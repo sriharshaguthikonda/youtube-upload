@@ -1,0 +1,67 @@
+﻿{
+    "schemaVersion":  "repo-map-artifact-branch/v1",
+    "repo":  "sriharshaguthikonda/youtube-upload",
+    "generatedAt":  "2026-06-01T06:11:50.9634298Z",
+    "source":  "Repo_maps GitHub footprint publish runner",
+    "publishBranch":  "repo-intel-artifacts",
+    "mapCount":  8,
+    "totalBytes":  482632,
+    "maps":  [
+                 {
+                     "name":  "GUI",
+                     "ref":  "refs/remotes/origin/GUI",
+                     "commit":  "4ba5b172cbb71b2ed5741241fd78303ab8b63925",
+                     "path":  ".repo-intel/branches/remote-origin/gui__4ba5b172cbb7/repo-map-full.json",
+                     "bytes":  59704
+                 },
+                 {
+                     "name":  "auth-gui",
+                     "ref":  "refs/remotes/origin/auth-gui",
+                     "commit":  "6ce05d8588891185a7f9c5eba7b0acd0284c2e38",
+                     "path":  ".repo-intel/branches/remote-origin/auth-gui__6ce05d858889/repo-map-full.json",
+                     "bytes":  29823
+                 },
+                 {
+                     "name":  "fix_293",
+                     "ref":  "refs/remotes/origin/fix_293",
+                     "commit":  "6a30b55d0fd4976571a5b9b34c01fd41cec49c7a",
+                     "path":  ".repo-intel/branches/remote-origin/fix-293__6a30b55d0fd4/repo-map-full.json",
+                     "bytes":  44304
+                 },
+                 {
+                     "name":  "master",
+                     "ref":  "refs/remotes/origin/master",
+                     "commit":  "6a30b55d0fd4976571a5b9b34c01fd41cec49c7a",
+                     "path":  ".repo-intel/branches/remote-origin/master__6a30b55d0fd4/repo-map-full.json",
+                     "bytes":  44304
+                 },
+                 {
+                     "name":  "modularize",
+                     "ref":  "refs/remotes/origin/modularize",
+                     "commit":  "e09591eb99c3e0a42e3e3539cd754a63ed28bb71",
+                     "path":  ".repo-intel/branches/remote-origin/modularize__e09591eb99c3/repo-map-full.json",
+                     "bytes":  40907
+                 },
+                 {
+                     "name":  "more-retry-exceptions",
+                     "ref":  "refs/remotes/origin/more-retry-exceptions",
+                     "commit":  "706207baa4eabda2dde2e4ffa7d30671e8b331ed",
+                     "path":  ".repo-intel/branches/remote-origin/more-retry-exceptions__706207baa4ea/repo-map-full.json",
+                     "bytes":  39076
+                 },
+                 {
+                     "name":  "multiple-youtube-accounts",
+                     "ref":  "refs/remotes/origin/multiple-youtube-accounts",
+                     "commit":  "a0a68c4fafe4e8713209e144c79fce7ca7536975",
+                     "path":  ".repo-intel/branches/remote-origin/multiple-youtube-accounts__a0a68c4fafe4/repo-map-full.json",
+                     "bytes":  72512
+                 },
+                 {
+                     "name":  "shortcut-link-creation",
+                     "ref":  "refs/remotes/origin/shortcut-link-creation",
+                     "commit":  "a2940ef48d2dfbb821f22afe570b33c420ea35d0",
+                     "path":  ".repo-intel/branches/remote-origin/shortcut-link-creation__a2940ef48d2d/repo-map-full.json",
+                     "bytes":  125965
+                 }
+             ]
+}
