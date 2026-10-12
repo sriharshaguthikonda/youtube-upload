@@ -18,6 +18,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from .errors import InvalidVideoFormat
@@ -133,8 +134,12 @@ def _ffprobe_has_video(path):
     """``True``/``False`` from ffprobe, ``None`` if it could not run to completion."""
     cmd = ["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries",
            "stream=codec_type", "-of", "json", "-i", str(Path(path).resolve())]
+    extra = {}
+    if sys.platform == "win32":
+        # From pythonw (the windowless GUI) a console would flash up for every file checked.
+        extra["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
     try:
-        done = subprocess.run(cmd, capture_output=True, timeout=FFPROBE_TIMEOUT, check=False)
+        done = subprocess.run(cmd, capture_output=True, timeout=FFPROBE_TIMEOUT, check=False, **extra)
     except (OSError, subprocess.TimeoutExpired):
         return None, ""
     if done.returncode != 0:

@@ -656,7 +656,11 @@ def main(arguments, progress_factory=None, cancel_check=None, notify=None, log=d
     if run_report.cancelled:
         raise UploadCancelled("Cancelled by user")
     if not run_report.ok:
-        raise UploadFailed("\n".join(run_report.summary_lines()), run_report)
+        # The per-file summary was already logged by run_main; keep this message short so the
+        # CLI does not print it twice (the GUI builds its dialog from run_report itself).
+        failed = sum(1 for r in run_report.results if not r.succeeded) + len(run_report.account_errors)
+        raise UploadFailed("{0} of {1} requested upload(s) did not complete; see the summary above.".format(
+            max(failed, 1), max(len(run_report.results), 1)), run_report)
     return run_report
 
 

@@ -270,3 +270,33 @@ def test_debug_tolerates_missing_or_broken_stderr(capsys):
         lib.debug("no stderr under pythonw")      # must not raise
     finally:
         sys.stderr = saved
+
+
+# ------------------------------------------------- Windows: replace() can be blocked briefly
+
+def test_replace_is_retried_when_another_process_briefly_holds_the_file(tmp_path, monkeypatch):
+    """Windows antivirus/indexers often hold a freshly written file for a few ms."""
+    target = tmp_path / "token.json"
+    paths.write_private_text(target, "OLD")
+    real_replace, calls = os.replace, {"n": 0}
+
+    def flaky(src, dst):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise PermissionError(13, "The process cannot access the file because it is being used")
+        return real_replace(src, dst)
+    monkeypatch.setattr(paths.os, "replace", flaky)
+    monkeypatch.setattr(paths.time, "sleep", lambda s: None)
+    paths.write_private_text(target, "NEW")
+    assert target.read_text() == "NEW" and calls["n"] == 3
+    assert [p.name for p in tmp_path.iterdir() if p.name.endswith(".tmp")] == []
+
+
+def test_replace_gives_up_eventually_and_cleans_up(tmp_path, monkeypatch):
+    target = tmp_path / "w" / "token.json"
+    paths.write_private_text(target, "OLD")
+    monkeypatch.setattr(paths.os, "replace", lambda s, d: (_ for _ in ()).throw(PermissionError(13, "locked")))
+    monkeypatch.setattr(paths.time, "sleep", lambda s: None)
+    with pytest.raises(PermissionError):
+        paths.write_private_text(target, "NEW")
+    assert target.read_text() == "OLD" and [p.name for p in target.parent.iterdir()] == ["token.json"]

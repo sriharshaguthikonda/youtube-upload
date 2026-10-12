@@ -78,6 +78,22 @@ def short_hash(text, length=12):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:length]
 
 
+def _replace_with_retries(src, dst, attempts=6, base_delay=0.05):
+    """``os.replace`` that tolerates Windows briefly locking the target.
+
+    Antivirus scanners and search indexers often hold a freshly written file for a few
+    milliseconds, which makes the rename fail with ``PermissionError`` on Windows.
+    """
+    for attempt in range(attempts):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(base_delay * (attempt + 1))
+
+
 def write_private_text(path, text):
     """Atomically write ``text`` to ``path``; owner-only permissions on POSIX.
 
@@ -93,7 +109,7 @@ def write_private_text(path, text):
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(tmp, str(path))
+        _replace_with_retries(tmp, str(path))
     except BaseException:
         try:
             os.unlink(tmp)

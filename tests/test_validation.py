@@ -205,3 +205,28 @@ def test_extension_filter_is_case_insensitive_and_exact():
     assert not formats.is_supported_extension("notes.mkv")
     with pytest.raises(InvalidVideoFormat, match="Accepted extensions"):
         formats.validate_video_format("a.txt")
+
+
+def test_ffprobe_is_started_without_a_console_window_on_windows(tmp_path, monkeypatch):
+    """A windowless (pythonw) GUI would otherwise flash a console for every file checked."""
+    monkeypatch.delenv("YOUTUBE_UPLOAD_NO_FFPROBE", raising=False)
+    monkeypatch.setattr(cv.shutil, "which", lambda name: "ffprobe")
+    seen = {}
+
+    class Done(object):
+        returncode, stdout, stderr = 0, b'{"streams": [{"codec_type": "video"}]}', b""
+
+    def fake_run(cmd, **kwargs):
+        seen.update(kwargs)
+        return Done()
+    monkeypatch.setattr(cv.subprocess, "run", fake_run)
+    monkeypatch.setattr(cv.subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False)
+    monkeypatch.setattr(cv.sys, "platform", "win32")
+    good = tmp_path / "ok.mp4"
+    good.write_bytes(MP4_HEADER + b"\x01" * 4000)
+    assert cv.validate_video_content(str(good)) == "mp4"
+    assert seen["creationflags"] == 0x08000000
+    monkeypatch.setattr(cv.sys, "platform", "linux")
+    seen.clear()
+    cv.validate_video_content(str(good))
+    assert "creationflags" not in seen

@@ -83,7 +83,8 @@ def test_every_upload_failing_is_not_success(world, tmp_path):
     assert out == ""
     assert exit_code(exc) == report.EXIT_REQUEST
     assert [r.status for r in exc.report.results] == [report.FAILED, report.FAILED]
-    assert "invalidTitle" in str(exc)
+    assert "invalidTitle" in "\n".join(exc.report.summary_lines())
+    assert "2 of 2" in str(exc)
 
 
 def test_partial_failure_exits_nonzero_but_keeps_the_good_upload(world, tmp_path):
@@ -107,7 +108,7 @@ def test_quota_exhaustion_stops_the_account_and_marks_the_rest_not_attempted(wor
     assert isinstance(exc, UploadFailed)
     assert [r.status for r in exc.report.results] == [report.FAILED, report.NOT_ATTEMPTED, report.NOT_ATTEMPTED]
     assert len(server.requests_to("POST", "/upload/youtube/v3/videos")) == 1   # did not hammer the API
-    assert "quotaExceeded" in str(exc) and exit_code(exc) == report.EXIT_REQUEST
+    assert "quotaExceeded" in "\n".join(exc.report.summary_lines()) and exit_code(exc) == report.EXIT_REQUEST
 
 
 def test_a_bad_file_does_not_stop_the_others(world, tmp_path):
@@ -468,3 +469,17 @@ def test_no_stderr_means_no_bar_and_no_crash():
         _sys.stderr = saved
     assert info.callback is None
     info.finish()
+
+
+def test_failure_summary_is_printed_once_not_twice(world, tmp_path, monkeypatch, capsys):
+    world.account("work")
+    bad = tmp_path / "bad.mp4"
+    bad.write_bytes(b"nope" * 500)
+    monkeypatch.setattr(sys, "argv", ["youtube-upload"] + world.args("--account", "work", str(bad)))
+    with pytest.raises(SystemExit):
+        main.run()
+    err = capsys.readouterr().err
+    # the reason appears in the live "FAILED ..." line and once in the summary, not a third time
+    assert err.count("not a recognised video container") == 2
+    assert err.count("Summary:") == 1
+    assert "1 of 1 requested upload(s) did not complete" in err
