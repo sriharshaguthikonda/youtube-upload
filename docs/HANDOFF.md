@@ -82,7 +82,7 @@ and in the issue #16 comments.
   single-chunk files and random Cancel, 10 multi-file scenarios, 20 unwritable-state-folder scenarios).
   Note: the fuzz alone does **not** catch removal of the early session record, because skip mode has a
   second safety net (remote scan); the dedicated tests do.
-* Local results on this commit: 480 passed / 2 skipped (3.12, no Tk); 528 passed / 1 skipped (3.9 and
+* Local results on this commit: 485 passed / 2 skipped (3.12, no Tk); 542 passed / 1 skipped (3.9 and
   3.14 with Tk under Xvfb, and 3.9 on the lowest allowed dependency versions). Skips: "needs a non-root
   POSIX user" and (3.12 only) no `tkinter`.
 
@@ -100,9 +100,8 @@ and in the issue #16 comments.
 6. Locking on network file systems (NFS/SMB) is unobserved; `flock` semantics vary.
 7. Whether Google accepts omitting `categoryId` and the cleaned description/tags exactly as the
    uploader now sends them is covered only by the fake server.
-8. GUI: `Browse Folder` scans recursively on the UI thread (a huge tree can freeze the window
-   briefly); the worker is a daemon thread, so closing the window mid-upload stops it without a
-   final status. The chunk size is not exposed in the GUI.
+8. GUI: the upload worker is a daemon thread, so closing the window mid-upload stops it without a
+   final status (the next run resumes). The chunk size is not exposed in the GUI.
 
 ## 6. Owner-only actions (the agent could not and did not do these)
 

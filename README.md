@@ -148,6 +148,9 @@ youtube-upload --accounts-dir D:/yt --account clientA video.mp4
 `Youtube_upload_app.bat` (Windows), `youtube-upload-gui`, or `python -m youtube_upload.gui_app`.
 
 * Pick files or a folder (drag and drop with the `gui` extra), fill in what you want, press **Upload**.
+  A folder is searched on a background thread (sub-folders included, symbolic links not followed);
+  only supported video types are selected, in natural order (`clip2` before `clip10`), and the
+  number of other files ignored is logged. **Upload** is disabled until the search finishes.
 * **Account label / Accounts / Accounts dir / Client secrets / Credentials file** work as on the
   command line. **Sign in** and **Sign out** buttons act on the chosen account; a status line shows
   whether it is signed in.

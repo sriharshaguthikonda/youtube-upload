@@ -1,3 +1,4 @@
+import os
 import re
 
 from . import formats
@@ -46,3 +47,46 @@ def filter_supported_video_paths(paths):
         else:
             unsupported.append(p)
     return supported, unsupported
+
+
+_DIGITS = re.compile(r"(\d+)")
+
+
+def natural_key(path):
+    """Sort key: case-insensitive, and ``clip2`` before ``clip10``."""
+    return [(0, int(part)) if part.isdigit() else (1, part.casefold()) for part in _DIGITS.split(str(path))]
+
+
+class ScanResult(object):
+    """What :func:`scan_folder` found."""
+
+    def __init__(self):
+        self.videos = []        # supported files, natural order
+        self.ignored = 0        # files with an unsupported extension
+        self.errors = []        # folders that could not be read (text, already readable)
+        self.cancelled = False
+
+
+def scan_folder(folder, cancelled=lambda: False):
+    """Find every supported video under ``folder`` (blocking: run it off the UI thread).
+
+    Symbolic links to folders are not followed (no loops), unreadable sub-folders are reported
+    instead of aborting the scan, and the order does not depend on the file system.
+    """
+    result = ScanResult()
+
+    def on_error(exc):
+        result.errors.append("{0}: {1}".format(getattr(exc, "filename", None) or folder,
+                                               getattr(exc, "strerror", None) or exc))
+    for root, _dirs, files in os.walk(str(folder), onerror=on_error):
+        if cancelled():
+            result.cancelled = True
+            break
+        for name in files:
+            path = os.path.join(root, name)
+            if formats.is_supported_extension(path):
+                result.videos.append(path)
+            else:
+                result.ignored += 1
+    result.videos.sort(key=natural_key)
+    return result

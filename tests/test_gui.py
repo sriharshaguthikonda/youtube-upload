@@ -783,3 +783,175 @@ def test_crash_log_and_panes_are_redacted(gui):
     gui._log("retrying https://u/?upload_id=SECRETPANE&x=1")
     gui._log_error("failed https://u/revoke?token=SECRETERRPANE")
     assert "SECRETPANE" not in text_of(gui.log_text) and "SECRETERRPANE" not in text_of(gui.errors_text)
+
+
+# ------------------------------------------------------------ choosing a folder
+
+def _folder_with_videos(tmp_path, count=3, junk=2):
+    folder = tmp_path / "library"
+    for i in range(count):
+        write_mp4(folder / ("clip%d.mp4" % (count - i)), size=2048, seed="f%d" % i)
+    for i in range(junk):
+        (folder / ("notes%d.txt" % i)).write_text("x")
+    return folder
+
+
+def test_choosing_a_folder_selects_sorted_videos_and_counts_the_rest(gui, tmp_path, monkeypatch):
+    folder = _folder_with_videos(tmp_path)
+    monkeypatch.setattr(gui_app.filedialog, "askdirectory", lambda **k: str(folder))
+    gui._choose_video_folder()
+    pump(gui, lambda: not gui._scanning)
+    assert [Path(p).name for p in gui.video_paths] == ["clip1.mp4", "clip2.mp4", "clip3.mp4"]
+    assert "3 supported file(s) selected" in gui.videos_label.cget("text")
+    assert "2 other file(s) ignored" in text_of(gui.log_text)
+    assert "notes0.txt" not in text_of(gui.log_text)                  # no wall of file names
+    assert not disabled(gui.upload_button)
+
+
+def test_a_slow_folder_scan_does_not_freeze_the_window(gui, tmp_path, monkeypatch):
+    folder = _folder_with_videos(tmp_path)
+    gate = threading.Event()
+    real = gui_app.gui_app_files.scan_folder
+
+    def slow_scan(path, cancelled=lambda: False):
+        gate.wait(5)
+        return real(path, cancelled=cancelled)
+    monkeypatch.setattr(gui_app.gui_app_files, "scan_folder", slow_scan)
+    monkeypatch.setattr(gui_app.filedialog, "askdirectory", lambda **k: str(folder))
+
+    started = time.time()
+    gui._choose_video_folder()
+    assert time.time() - started < 1.0                                # returned at once
+    assert gui._scanning and "Scanning" in gui.videos_label.cget("text")
+    assert disabled(gui.upload_button)                                # no upload of a half-known selection
+    ticks = {"n": 0}
+
+    def tick():
+        ticks["n"] += 1
+        if gui._scanning:
+            gui.root.after(10, tick)
+    gui.root.after(10, tick)
+    end = time.time() + 0.4
+    while time.time() < end:
+        gui.root.update()
+        time.sleep(0.005)
+    assert ticks["n"] >= 10 and gui.video_paths == []                 # the loop ran; nothing selected yet
+    gate.set()
+    pump(gui, lambda: not gui._scanning)
+    assert len(gui.video_paths) == 3 and not disabled(gui.upload_button)
+
+
+def test_a_newer_choice_replaces_a_scan_still_running(gui, tmp_path, monkeypatch):
+    first, second = tmp_path / "one", tmp_path / "two"
+    write_mp4(first / "a.mp4", size=2048, seed="a")
+    write_mp4(second / "b.mp4", size=2048, seed="b")
+    gate = threading.Event()
+    real = gui_app.gui_app_files.scan_folder
+
+    def scan(path, cancelled=lambda: False):
+        if str(path).endswith("one"):
+            gate.wait(5)
+        return real(path, cancelled=cancelled)
+    monkeypatch.setattr(gui_app.gui_app_files, "scan_folder", scan)
+    answers = iter([str(first), str(second)])
+    monkeypatch.setattr(gui_app.filedialog, "askdirectory", lambda **k: next(answers))
+    gui._choose_video_folder()
+    gui._choose_video_folder()
+    gate.set()
+    pump(gui, lambda: not gui._scanning)
+    gui.root.update()
+    time.sleep(0.2)
+    gui.root.update()
+    assert [Path(p).name for p in gui.video_paths] == ["b.mp4"]       # the stale result never lands
+
+
+def test_an_empty_folder_is_reported_and_keeps_the_old_selection(gui, tmp_path, monkeypatch):
+    existing = write_mp4(tmp_path / "keep.mp4", size=2048)
+    gui._set_video_selection([str(existing)])
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    (empty / "readme.txt").write_text("x")
+    monkeypatch.setattr(gui_app.filedialog, "askdirectory", lambda **k: str(empty))
+    gui._choose_video_folder()
+    pump(gui, lambda: not gui._scanning)
+    assert gui.video_paths == [str(existing)]
+    assert "No supported videos found" in text_of(gui.log_text)
+
+
+def test_unreadable_subfolders_are_listed_in_the_errors_pane(gui, tmp_path, monkeypatch):
+    folder = _folder_with_videos(tmp_path, count=1, junk=0)
+    real = gui_app.gui_app_files.scan_folder
+
+    def scan(path, cancelled=lambda: False):
+        result = real(path, cancelled=cancelled)
+        result.errors.append("%s: Permission denied" % (folder / "locked"))
+        return result
+    monkeypatch.setattr(gui_app.gui_app_files, "scan_folder", scan)
+    monkeypatch.setattr(gui_app.filedialog, "askdirectory", lambda **k: str(folder))
+    gui._choose_video_folder()
+    pump(gui, lambda: not gui._scanning)
+    assert "locked" in text_of(gui.errors_text) and len(gui.video_paths) == 1
+
+
+def test_dropping_a_folder_and_a_file_scans_in_the_background(gui, tmp_path):
+    folder = _folder_with_videos(tmp_path, count=2, junk=1)
+    loose = write_mp4(tmp_path / "loose.mp4", size=2048, seed="loose")
+
+    class Event(object):
+        data = "{%s} {%s}" % (folder, loose)
+    gui._on_drop(Event())
+    pump(gui, lambda: not gui._scanning)
+    assert sorted(Path(p).name for p in gui.video_paths) == ["clip1.mp4", "clip2.mp4", "loose.mp4"]
+
+
+def test_the_scan_thread_never_touches_a_widget(gui, tmp_path, monkeypatch):
+    folder = _folder_with_videos(tmp_path)
+    violations = []
+    main_thread = threading.current_thread()
+    for cls, names in ((tk.Text, ["insert", "delete", "see", "configure"]),
+                       (ttk.Label, ["configure"]), (ttk.Button, ["state"]),
+                       (tk.Variable, ["set", "get"])):
+        for name in names:
+            original = getattr(cls, name)
+
+            def wrapper(self, *a, __o=original, __n="%s.%s" % (cls.__name__, name), **k):
+                if threading.current_thread() is not main_thread:
+                    violations.append(__n)
+                return __o(self, *a, **k)
+            monkeypatch.setattr(cls, name, wrapper)
+    monkeypatch.setattr(gui_app.filedialog, "askdirectory", lambda **k: str(folder))
+    gui._choose_video_folder()
+    pump(gui, lambda: not gui._scanning)
+    assert violations == [] and len(gui.video_paths) == 3
+
+
+def test_switching_account_folder_cancels_a_running_scan(gui, tmp_path, monkeypatch):
+    folder = _folder_with_videos(tmp_path)
+    gate = threading.Event()
+    real = gui_app.gui_app_files.scan_folder
+    monkeypatch.setattr(gui_app.gui_app_files, "scan_folder",
+                        lambda p, cancelled=lambda: False: (gate.wait(5), real(p, cancelled=cancelled))[1])
+    monkeypatch.setattr(gui_app.filedialog, "askdirectory", lambda **k: str(folder))
+    gui._choose_video_folder()
+    assert gui._scanning
+    gui._clear_video_selection()                      # what choosing another accounts folder does
+    assert not gui._scanning and not disabled(gui.upload_button)
+    gate.set()
+    time.sleep(0.2)
+    gui.root.update()
+    assert gui.video_paths == []
+
+
+def test_finishing_an_upload_does_not_unlock_upload_during_a_folder_scan(gui, tmp_path, monkeypatch):
+    folder = _folder_with_videos(tmp_path)
+    gate = threading.Event()
+    real = gui_app.gui_app_files.scan_folder
+    monkeypatch.setattr(gui_app.gui_app_files, "scan_folder",
+                        lambda p, cancelled=lambda: False: (gate.wait(5), real(p, cancelled=cancelled))[1])
+    monkeypatch.setattr(gui_app.filedialog, "askdirectory", lambda **k: str(folder))
+    gui._choose_video_folder()
+    gui._set_idle()                                    # an upload that was running just ended
+    assert gui._scanning and disabled(gui.upload_button)
+    gate.set()
+    pump(gui, lambda: not gui._scanning)
+    assert not disabled(gui.upload_button)

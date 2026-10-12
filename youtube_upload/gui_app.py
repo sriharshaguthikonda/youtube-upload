@@ -77,6 +77,8 @@ class UploadGUI:
         self.progress_bars: dict[str, ttk.Progressbar] = {}
         self.status_labels: dict[str, ttk.Label] = {}
         self._uploading = False
+        self._scanning = False         # a folder is being searched for videos (off the UI thread)
+        self._scan_token = 0           # bumped to cancel/replace a running scan
         self.cancel_event = threading.Event()
         self._log_lines = 0
         self._error_lines = 0
@@ -749,7 +751,16 @@ class UploadGUI:
             return
         self._apply_theme_from_var()
 
+    def _cancel_scan(self):
+        """Forget a folder scan in progress: its result will be discarded."""
+        self._scan_token += 1
+        if self._scanning:
+            self._scanning = False
+            if not self._uploading:
+                self.upload_button.state(["!disabled"])
+
     def _clear_video_selection(self):
+        self._cancel_scan()
         self.video_paths = []
         self.video_path_var.set("")
         self.videos_label.config(text="No videos selected")
@@ -802,22 +813,57 @@ class UploadGUI:
             # Always reset video selection when switching accounts
             self._clear_video_selection()
 
-    def _collect_files(self, folder):
+    def _scan_in_background(self, folders, loose_files=()):
+        """Find the videos under ``folders`` without freezing the window.
+
+        The search runs on a worker thread that touches no widget; its result comes back through
+        ``_post`` and is dropped if the user chose something else in the meantime.
+        """
+        self._cancel_scan()
+        token = self._scan_token
+        self._scanning = True
+        self.upload_button.state(["disabled"])
+        self.videos_label.config(text="Scanning folder...")
+        threading.Thread(target=self._scan_worker, args=(token, list(folders), list(loose_files)),
+                         daemon=True).start()
+
+    def _scan_worker(self, token, folders, loose_files):
+        def stale():
+            return token != self._scan_token or self._closing
+        found, ignored, errors = list(loose_files), 0, []
         try:
-            return [str(p) for p in Path(folder).rglob("*") if p.is_file()]
-        except OSError as exc:
-            self._log_error("Cannot read the folder {0}: {1}".format(folder, exc))
-            return []
+            for folder in folders:
+                result = gui_app_files.scan_folder(folder, cancelled=stale)
+                found.extend(result.videos)
+                ignored += result.ignored
+                errors.extend(result.errors)
+                if stale():
+                    return
+        except Exception as exc:        # a worker must never die silently
+            errors.append("{0}: {1}".format(type(exc).__name__, exc))
+        self._post(self._finish_scan, token, found, ignored, errors)
+
+    def _finish_scan(self, token, found, ignored, errors):
+        if token != self._scan_token:
+            return                       # superseded
+        self._scanning = False
+        if not self._uploading:
+            self.upload_button.state(["!disabled"])
+        for message in errors:
+            self._log_error("Cannot read part of the folder: {0}".format(message))
+        if ignored:
+            self._log("{0} other file(s) ignored (not a supported video type).".format(ignored))
+        supported, _ = gui_app_files.filter_supported_video_paths(found)
+        if not supported:
+            self._log("No supported videos found in the selected folder(s).")
+            self._set_video_selection(self.video_paths, log_unsupported=False)      # restore the label
+            return
+        self._set_video_selection(found)
 
     def _choose_video_folder(self):
         path = filedialog.askdirectory(title="Select folder containing videos")
-        if not path:
-            return
-        files = self._collect_files(path)
-        if not files:
-            self._log("No files found in the selected folder.")
-            return
-        self._set_video_selection(files)
+        if path:
+            self._scan_in_background([path])
 
     def _commit_accounts_dir(self, *_):
         path = (self.accounts_dir_var.get() or "").strip()
@@ -861,15 +907,19 @@ class UploadGUI:
             dropped = list(self.root.tk.splitlist(raw))
         except tk.TclError:
             dropped = re.findall(r"{[^}]+}|[^\s]+", raw.strip())
+        folders: list[str] = []
         files: list[str] = []
         for item in dropped:
             path = Path(item.strip("{}"))
             if path.is_dir():
-                files.extend(self._collect_files(path))
+                folders.append(str(path))
             elif path.is_file():
                 files.append(str(path))
-        if not files:
+        if not folders and not files:
             self._log("No files found in dropped items.")
+            return
+        if folders:
+            self._scan_in_background(folders, files)
             return
         supported, _ = self._set_video_selection(files)
         if supported:
@@ -1171,6 +1221,9 @@ class UploadGUI:
         if self._uploading:
             self._info("Upload in progress", "An upload is already running.")
             return
+        if self._scanning:
+            self._info("Still searching", "Wait until the folder has been searched for videos.")
+            return
         self._clear_errors()
         errors = self._validate_fields()
         if errors:
@@ -1257,6 +1310,8 @@ class UploadGUI:
         self._uploading = False
         for button in (self.upload_button, self.sign_in_button, self.sign_out_button):
             button.state(["!disabled"])
+        if self._scanning:
+            self.upload_button.state(["disabled"])        # a folder search is still running
         self.cancel_button.state(["disabled"])
         self._refresh_account_status()
 
