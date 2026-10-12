@@ -36,9 +36,16 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq xvfb python3-tk ffmpeg || true
           xvfb-run -a python -m pytest
+      - name: Tk diagnostics (Windows)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        run: |
+          python -c "import sys, tkinter; print(sys.version); r = tkinter.Tk(); print('Tk patchlevel', r.tk.call('info', 'patchlevel')); r.destroy()"
+          Get-ChildItem "$env:pythonLocation\tcl" | Select-Object -First 20 | Format-Table Name
+          "TCL_LIBRARY=$env:TCL_LIBRARY TK_LIBRARY=$env:TK_LIBRARY"
       - name: Tests (Windows)
         if: runner.os == 'Windows'
-        run: python -m pytest
+        run: python -m pytest -rs
 
   build:
     name: build wheel and sdist

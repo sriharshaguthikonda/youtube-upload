@@ -230,3 +230,28 @@ def test_end_to_end_login_with_real_flow_stores_private_token_file(tmp_path, mon
     assert stored["refresh_token"] == "fake-refresh" and stored["client_id"] == FAKE_CLIENT_ID
     if os.name == "posix":
         assert mode_of(creds_file) == 0o600
+
+
+def test_fixed_port_is_used_for_the_redirect():
+    import socket
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+    flow = FakeFlow()
+    run_loopback_flow(flow, auth.SCOPES, notify=lambda m: None, timeout=5, poll=0.02, port=port,
+                      browser_opener=_browser(flow, ({"state": None, "code": "abc"}, "/")))
+    assert flow.redirect_uri == "http://127.0.0.1:%d/" % port and flow.fetched_code == "abc"
+
+
+def test_port_in_use_is_a_clear_error():
+    import socket
+    held = socket.socket()
+    held.bind(("127.0.0.1", 0))
+    held.listen(1)
+    try:
+        port = held.getsockname()[1]
+        with pytest.raises(AuthenticationError, match="Cannot listen on 127.0.0.1:%d" % port):
+            run_loopback_flow(FakeFlow(), auth.SCOPES, notify=lambda m: None, timeout=1, port=port)
+    finally:
+        held.close()

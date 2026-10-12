@@ -208,6 +208,7 @@ def test_unicode_account_labels_are_allowed(world, tmp_path):
     (["--embeddable", "maybe"], "--embeddable"),
     (["--category", "NotACategory"], "not a valid category"),
     (["--accounts", " , "], "no account names"),
+    (["--auth-port", "70000"], "--auth-port"),
 ])
 def test_bad_options_fail_fast_with_exit_code_2_and_no_network(world, tmp_path, argv, fragment):
     video = write_mp4(tmp_path / "v.mp4")
@@ -286,11 +287,15 @@ def test_list_accounts(world, capsys):
 
 def test_login_and_logout_actions_use_the_account_files(world, monkeypatch):
     calls = []
-    monkeypatch.setattr(auth, "login", lambda secrets, creds, **kw: calls.append(("login", Path(creds).name, kw["open_browser"])))
+    ports = []
+    monkeypatch.setattr(auth, "login", lambda secrets, creds, **kw: ports.append(kw["port"]) or
+                        calls.append(("login", Path(creds).name, kw["open_browser"])))
     monkeypatch.setattr(auth, "logout", lambda creds, revoke=True: calls.append(("logout", Path(creds).name, revoke)) or auth.LogoutResult(True, True, "Signed out."))
-    main.main(["--login", "--accounts", "work,home", "--no-browser", "--accounts-dir", str(world.accounts_dir)])
+    main.main(["--login", "--accounts", "work,home", "--no-browser", "--auth-port", "8765",
+               "--accounts-dir", str(world.accounts_dir)])
     main.main(["--logout", "--account", "work", "--no-revoke", "--accounts-dir", str(world.accounts_dir)])
     assert calls == [("login", "work.json", False), ("login", "home.json", False), ("logout", "work.json", False)]
+    assert ports == [8765, 8765]
 
 
 def test_legacy_default_credentials_are_copied_to_the_per_user_folder(tmp_path, monkeypatch):

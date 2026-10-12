@@ -176,12 +176,14 @@ def describe_refresh_error(exc, client_secrets_file=""):
 # ---------------------------------------------------------------------------
 
 def login(client_secrets_file, credentials_file, open_browser=True, notify=None,
-          cancel=None, timeout=300):
+          cancel=None, timeout=300, port=0):
     """Run the browser sign-in and store the result. Returns the credentials."""
     config = load_client_config(client_secrets_file)
-    flow = InstalledAppFlow.from_client_config(config, SCOPES)
+    # PKCE is requested explicitly: older google-auth-oauthlib releases do not enable it by default.
+    flow = InstalledAppFlow.from_client_config(config, SCOPES, autogenerate_code_verifier=True)
     credentials = run_loopback_flow(
-        flow, SCOPES, open_browser=open_browser, notify=notify, cancel=cancel, timeout=timeout)
+        flow, SCOPES, open_browser=open_browser, notify=notify, cancel=cancel, timeout=timeout,
+        port=port)
     try:
         save_credentials(credentials, credentials_file)
     except OSError as exc:
@@ -191,7 +193,7 @@ def login(client_secrets_file, credentials_file, open_browser=True, notify=None,
 
 
 def get_credentials(client_secrets_file, credentials_file, interactive=True,
-                    open_browser=True, notify=None, cancel=None, timeout=300):
+                    open_browser=True, notify=None, cancel=None, timeout=300, port=0):
     """Return valid credentials, refreshing or signing in as needed.
 
     With ``interactive=False`` any situation that would need the browser raises
@@ -243,15 +245,15 @@ def get_credentials(client_secrets_file, credentials_file, interactive=True,
                 problem, "--credentials-file {0}".format(credentials_file)))
     notify("{0} Starting the Google sign-in.".format(problem))
     return login(client_secrets_file, credentials_file, open_browser=open_browser,
-                 notify=notify, cancel=cancel, timeout=timeout)
+                 notify=notify, cancel=cancel, timeout=timeout, port=port)
 
 
 def get_resource(client_secrets_file, credentials_file, interactive=True,
-                 open_browser=True, notify=None, cancel=None, timeout=300):
+                 open_browser=True, notify=None, cancel=None, timeout=300, port=0):
     """Authenticate and return a ``googleapiclient`` YouTube v3 resource."""
     credentials = get_credentials(
         client_secrets_file, credentials_file, interactive=interactive,
-        open_browser=open_browser, notify=notify, cancel=cancel, timeout=timeout)
+        open_browser=open_browser, notify=notify, cancel=cancel, timeout=timeout, port=port)
     # google-api-python-client wraps the credentials in an authorised http
     # client that refreshes the access token itself during long uploads, and
     # already excludes HTTP 308 (resume-incomplete) from redirect handling.

@@ -91,7 +91,7 @@ def _granted_scopes(flow, credentials):
 
 def run_loopback_flow(flow, required_scopes, open_browser=True, notify=None,
                       cancel=None, timeout=300, poll=0.25, browser_opener=None,
-                      monotonic=time.monotonic):
+                      monotonic=time.monotonic, port=0):
     """Run the browser sign-in for ``flow`` and return its credentials.
 
     ``flow`` is a ``google_auth_oauthlib.flow.Flow`` (or a test double with the
@@ -103,8 +103,13 @@ def run_loopback_flow(flow, required_scopes, open_browser=True, notify=None,
 
     state = secrets.token_urlsafe(24)
     app = _CallbackApp(state)
-    server = wsgiref.simple_server.make_server(
-        "127.0.0.1", 0, app, handler_class=_QuietHandler)
+    try:
+        server = wsgiref.simple_server.make_server(
+            "127.0.0.1", port, app, handler_class=_QuietHandler)
+    except OSError as exc:
+        raise AuthenticationError(
+            "Cannot listen on 127.0.0.1:{0} for the Google sign-in redirect ({1}). Pick another "
+            "--auth-port or leave it out.".format(port, exc)) from exc
     try:
         server.timeout = poll
         flow.redirect_uri = "http://127.0.0.1:{0}/".format(server.server_port)

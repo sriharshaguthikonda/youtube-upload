@@ -237,6 +237,8 @@ def validate_options(options, args, need_videos=True, warn=debug):
         raise OptionsError("--chunksize must be a positive multiple of 262144 bytes (256 KiB).")
     if options.max_retries < 0:
         raise OptionsError("--max-retries cannot be negative.")
+    if not 0 <= options.auth_port <= 65535:
+        raise OptionsError("--auth-port must be between 0 and 65535.")
     if options.description_file is not None:
         try:
             with open(options.description_file, encoding="utf-8") as handle:
@@ -344,7 +346,7 @@ def open_account(options, label=None, interactive=True, notify=debug, cancel=Non
     youtube = auth.get_resource(
         str(context.client_secrets), str(context.credentials), interactive=interactive,
         open_browser=not options.no_browser, notify=notify, cancel=cancel,
-        timeout=options.auth_timeout)
+        timeout=options.auth_timeout, port=options.auth_port)
     return context, youtube
 
 
@@ -582,6 +584,9 @@ def build_parser():
                       help='Do not open a browser automatically; print the sign-in address instead')
     parser.add_option('', '--auth-timeout', dest='auth_timeout', type="int", default=300,
                       help='Seconds to wait for the browser sign-in (default 300)')
+    parser.add_option('', '--auth-port', dest='auth_port', type="int", default=0,
+                      help='Fixed local port for the sign-in redirect (default: any free port). '
+                           'Use with an SSH tunnel: ssh -L PORT:127.0.0.1:PORT host')
     parser.add_option('', '--auth-browser', dest='auth_browser', action='store_true',
                       help='Deprecated and ignored: the system browser is now always used for sign-in')
 
@@ -636,7 +641,7 @@ def main(arguments, progress_factory=None, cancel_check=None, notify=None, log=d
         def sign_in(context):
             auth.login(str(context.client_secrets), str(context.credentials),
                        open_browser=not options.no_browser, notify=notify,
-                       cancel=cancel_check, timeout=options.auth_timeout)
+                       cancel=cancel_check, timeout=options.auth_timeout, port=options.auth_port)
             log("Signed in: {0}".format(context.label))
 
         def sign_out(context):
