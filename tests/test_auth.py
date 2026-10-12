@@ -290,8 +290,8 @@ def test_logout_revokes_and_deletes(tmp_path):
     creds_file = write_new_format(tmp_path / "a.json")
     seen = {}
 
-    def post(url, params=None, **kw):
-        seen["url"], seen["token"] = url, params["token"]
+    def post(url, data=None, **kw):
+        seen["url"], seen["token"] = url, data["token"]
         return _Resp(200)
     result = auth.logout(creds_file, http_post=post)
     assert (result.removed, result.revoked) == (True, True)

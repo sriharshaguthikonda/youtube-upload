@@ -1,5 +1,29 @@
 """Small helpers shared by the CLI and the library code."""
+import re
 import sys
+
+_REDACTIONS = [
+    # secrets that travel in a URL query or form body
+    (re.compile(r"(?i)([?&;\s](?:upload_id|token|access_token|refresh_token|id_token|code|client_secret|"
+                r"api_key|key|assertion)=)[^&\s'\"<>)]+"), r"\1[redacted]"),
+    (re.compile(r"(?i)\b(Bearer\s+)[A-Za-z0-9._~+/=\-]+"), r"\1[redacted]"),
+    # well-known token shapes, wherever they appear
+    (re.compile(r"ya29\.[A-Za-z0-9_\-]{8,}"), "[redacted]"),
+    (re.compile(r"1//[A-Za-z0-9_\-]{20,}"), "[redacted]"),
+    (re.compile(r"GOCSPX-[A-Za-z0-9_\-]{8,}"), "[redacted]"),
+]
+
+
+def redact(text):
+    """Blank out credentials, upload-session ids and authorization codes found in ``text``.
+
+    Defence in depth: our own messages never include them, but exception texts from the HTTP
+    stack print the full URL, and an upload session URL is a capability.
+    """
+    text = str(text)
+    for pattern, replacement in _REDACTIONS:
+        text = pattern.sub(replacement, text)
+    return text
 
 
 def debug(obj, fd=None):
@@ -10,6 +34,7 @@ def debug(obj, fd=None):
     fd = fd if fd is not None else sys.stderr
     if fd is None:
         return
+    obj = redact(obj)
     try:
         print(obj, file=fd)
     except (UnicodeEncodeError, OSError):

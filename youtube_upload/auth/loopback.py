@@ -14,6 +14,7 @@ would put the authorization code into logs. This replacement:
 import html
 import os
 import secrets
+import socketserver
 import threading
 import time
 import webbrowser
@@ -30,11 +31,22 @@ _PAGE = (
 # oauthlib raises on a "changed" scope (e.g. the user un-ticked one box on the
 # consent screen) before we can report which one; we check explicitly instead.
 _ENV_LOCK = threading.Lock()
+TOKEN_TIMEOUT = 30  # seconds for Google's token endpoint to answer
 
 
 class _QuietHandler(wsgiref.simple_server.WSGIRequestHandler):
+    timeout = 10  # a connection that never sends a request (browser pre-connect, port probe) is dropped
+
     def log_message(self, format, *args):  # noqa: A002 - signature fixed by base class
         return  # request lines contain the authorization code
+
+
+class _ThreadingServer(socketserver.ThreadingMixIn, wsgiref.simple_server.WSGIServer):
+    """One thread per connection, so an idle connection cannot block the sign-in or Cancel."""
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        return  # a dropped/timed-out connection is not worth a traceback
 
 
 class _CallbackApp(object):
@@ -105,7 +117,7 @@ def run_loopback_flow(flow, required_scopes, open_browser=True, notify=None,
     app = _CallbackApp(state)
     try:
         server = wsgiref.simple_server.make_server(
-            "127.0.0.1", port, app, handler_class=_QuietHandler)
+            "127.0.0.1", port, app, server_class=_ThreadingServer, handler_class=_QuietHandler)
     except OSError as exc:
         raise AuthenticationError(
             "Cannot listen on 127.0.0.1:{0} for the Google sign-in redirect ({1}). Pick another "
@@ -150,7 +162,7 @@ def run_loopback_flow(flow, required_scopes, open_browser=True, notify=None,
         previous = os.environ.get("OAUTHLIB_RELAX_TOKEN_SCOPE")
         os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
         try:
-            flow.fetch_token(code=value)
+            flow.fetch_token(code=value, timeout=TOKEN_TIMEOUT)
         except AuthenticationError:
             raise
         except Exception as exc:

@@ -3,6 +3,7 @@ import http.client
 import json
 import os
 import threading
+import time
 from types import SimpleNamespace
 from urllib.parse import urlencode
 
@@ -39,6 +40,7 @@ class FakeFlow(object):
         if self._fetch_error:
             raise self._fetch_error
         self.fetched_code = code
+        self.fetch_kwargs = kwargs
 
     @property
     def credentials(self):
@@ -255,3 +257,57 @@ def test_port_in_use_is_a_clear_error():
             run_loopback_flow(FakeFlow(), auth.SCOPES, notify=lambda m: None, timeout=1, port=port)
     finally:
         held.close()
+
+
+def _silent_connection(flow):
+    """A client that connects and never sends a byte (browser pre-connect, port probe)."""
+    import socket
+    port = int(flow.redirect_uri.rsplit(":", 1)[1].strip("/"))
+    return socket.create_connection(("127.0.0.1", port), timeout=5)
+
+
+def test_an_idle_connection_does_not_block_the_real_redirect():
+    """Regression: the server answered one connection at a time, so one silent socket froze
+    sign-in (and made timeout and Cancel useless)."""
+    flow = FakeFlow()
+    held = []
+    real = _browser(flow, ({"state": None, "code": "abc"}, "/"))
+
+    def opener(url):
+        held.append(_silent_connection(flow))
+        return real(url)
+    started = time.time()
+    try:
+        _run(flow, opener, timeout=5)
+    finally:
+        for sock in held:
+            sock.close()
+    assert flow.fetched_code == "abc" and time.time() - started < 4
+
+
+def test_cancel_works_while_an_idle_connection_is_open():
+    flow = FakeFlow()
+    held = []
+    ticks = {"n": 0}
+
+    def cancel():
+        ticks["n"] += 1
+        return ticks["n"] > 5
+
+    def opener(url):
+        held.append(_silent_connection(flow))
+        return True
+    started = time.time()
+    try:
+        with pytest.raises(UploadCancelled):
+            _run(flow, opener, cancel=cancel, timeout=30)
+    finally:
+        for sock in held:
+            sock.close()
+    assert time.time() - started < 5
+
+
+def test_the_token_request_has_a_timeout():
+    flow = FakeFlow()
+    _run(flow, _browser(flow, ({"state": None, "code": "abc"}, "/")))
+    assert flow.fetch_kwargs["timeout"] == 30

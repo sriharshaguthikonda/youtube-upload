@@ -10,11 +10,14 @@ based versions are read transparently and rewritten in the new format on first
 use (the secret values never leave the file).
 """
 import json
+import os
 from collections import namedtuple
 from datetime import datetime
 from pathlib import Path
 
+import google_auth_httplib2
 import googleapiclient.discovery
+import googleapiclient.http
 import requests
 from google.auth.exceptions import RefreshError, TransportError
 from google.auth.transport.requests import Request
@@ -33,6 +36,7 @@ YOUTUBE_UPLOAD_SCOPE = SCOPES  # name used by earlier versions
 DEFAULT_TOKEN_URI = "https://oauth2.googleapis.com/token"
 REVOKE_URI = "https://oauth2.googleapis.com/revoke"
 PERMISSIONS_URL = "https://myaccount.google.com/permissions"
+DEFAULT_HTTP_TIMEOUT = 300
 
 _PLACEHOLDER_PREFIX = "REPLACE"
 _NON_ACCOUNT_FILES = {"client_secrets.json", "gui_settings.json"}
@@ -254,11 +258,23 @@ def get_resource(client_secrets_file, credentials_file, interactive=True,
     credentials = get_credentials(
         client_secrets_file, credentials_file, interactive=interactive,
         open_browser=open_browser, notify=notify, cancel=cancel, timeout=timeout, port=port)
-    # google-api-python-client wraps the credentials in an authorised http
-    # client that refreshes the access token itself during long uploads, and
-    # already excludes HTTP 308 (resume-incomplete) from redirect handling.
+    # google-auth-httplib2 refreshes the access token itself during long uploads. build_http()
+    # already excludes HTTP 308 (resume-incomplete) from redirect handling; its 60 s per-request
+    # timeout is also a bound on sending one whole chunk, which a link below ~1 Mbit/s cannot
+    # meet for an 8 MiB chunk, so the timeout is raised (YOUTUBE_UPLOAD_HTTP_TIMEOUT overrides).
+    http = googleapiclient.http.build_http()
+    http.timeout = http_timeout()
     return googleapiclient.discovery.build(
-        "youtube", "v3", credentials=credentials, cache_discovery=False)
+        "youtube", "v3", http=google_auth_httplib2.AuthorizedHttp(credentials, http=http),
+        cache_discovery=False)
+
+
+def http_timeout():
+    try:
+        value = int(os.environ.get("YOUTUBE_UPLOAD_HTTP_TIMEOUT", DEFAULT_HTTP_TIMEOUT))
+    except ValueError:
+        value = DEFAULT_HTTP_TIMEOUT
+    return min(max(value, 30), 3600)
 
 
 LogoutResult = namedtuple("LogoutResult", "removed revoked message")
@@ -283,8 +299,9 @@ def logout(credentials_file, revoke=True, http_post=requests.post):
     token = getattr(credentials, "refresh_token", None) or getattr(credentials, "token", None)
     if revoke and token:
         try:
+            # The token goes in the body, never the URL: exception texts print the URL.
             response = http_post(
-                REVOKE_URI, params={"token": token}, timeout=15,
+                REVOKE_URI, data={"token": token}, timeout=15,
                 headers={"content-type": "application/x-www-form-urlencoded"})
             status = getattr(response, "status_code", None)
             if status == 200:
@@ -295,7 +312,7 @@ def logout(credentials_file, revoke=True, http_post=requests.post):
             else:
                 notes.append("Google answered HTTP {0} to the revoke request.".format(status))
         except requests.RequestException as exc:
-            notes.append("Could not reach Google to revoke the token ({0}).".format(exc))
+            notes.append("Could not reach Google to revoke the token ({0}).".format(type(exc).__name__))
     elif revoke:
         notes.append("There was no usable token to revoke.")
 
