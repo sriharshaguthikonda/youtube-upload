@@ -208,29 +208,47 @@ def test_concurrent_processes_lose_no_entries(tmp_path):
     assert len(json.loads(Ledger(tmp_path, "UCprocs").path.read_text())["videos"]) == 40
 
 
-def test_stale_lock_from_a_crashed_process_is_broken(tmp_path):
+def test_a_lock_file_left_behind_by_a_crash_does_not_block(tmp_path):
+    """The lock is an OS lock on the file, so an old leftover file is just a file."""
     ledger = Ledger(tmp_path, "UCstale")
     lock = ledger.path.with_suffix(".lock")
     lock.parent.mkdir(parents=True, exist_ok=True)
-    lock.write_text("")
-    old = lock.stat().st_mtime - 3600
-    os.utime(lock, (old, old))
+    lock.write_text("left behind by a process that was killed")
     ledger.record("h", "vid00000001", "t", 1, "x.mp4")
     assert ledger.get("h")
 
 
-def test_live_lock_times_out_with_a_clear_error(tmp_path, monkeypatch):
+def test_live_lock_times_out_with_a_clear_error(tmp_path):
     from youtube_upload import ledger as ledger_mod
+    from youtube_upload.ledger import ProcessLock
     ledger = Ledger(tmp_path, "UCbusy")
-    lock = ledger.path.with_suffix(".lock")
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    lock.write_text("")
-    ticks = iter(range(0, 1000))
-    monkeypatch.setattr(ledger_mod.time, "sleep", lambda s: None)
-    with pytest.raises(TimeoutError, match="another upload"):
-        with ledger_mod._file_lock(lock, timeout=3, stale_after=10 ** 9, sleep=lambda s: None,
-                                   clock=lambda: next(ticks)):
-            pass
+    holder = ProcessLock(ledger.path.with_suffix(".lock"))
+    assert holder.acquire()
+    try:
+        ticks = iter(range(0, 1000))
+        with pytest.raises(TimeoutError, match="another upload"):
+            with ledger_mod._file_lock(ledger.path.with_suffix(".lock"), timeout=3,
+                                       sleep=lambda s: None, clock=lambda: next(ticks)):
+                pass
+    finally:
+        holder.release()
+    ledger.record("h", "vid00000001", "t", 1, "x.mp4")           # free again afterwards
+    assert ledger.get("h")
+
+
+def test_many_processes_hammering_the_ledger_lose_nothing_and_never_crash(tmp_path):
+    """Regression for the Windows PermissionError race found by CI (O_EXCL lock files)."""
+    script = (
+        "import sys; from youtube_upload.ledger import Ledger\n"
+        "n = sys.argv[2]; led = Ledger(sys.argv[1], 'UChammer')\n"
+        "[led.record('h%s_%d' % (n, i), 'vid%08d' % (int(n) * 100 + i), 't', 1, 'x.mp4') for i in range(25)]\n")
+    env = dict(os.environ, PYTHONPATH=str(REPO))
+    procs = [subprocess.Popen([sys.executable, "-c", script, str(tmp_path), str(n)], env=env,
+                              stderr=subprocess.PIPE) for n in range(8)]
+    for p in procs:
+        _, err = p.communicate(timeout=120)
+        assert p.returncode == 0, err.decode()
+    assert len(json.loads(Ledger(tmp_path, "UChammer").path.read_text())["videos"]) == 200
 
 
 # ---------------------------------------------------------------------- lib helpers

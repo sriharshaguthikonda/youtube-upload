@@ -20,33 +20,24 @@ _THREAD_LOCK = threading.Lock()
 
 
 @contextlib.contextmanager
-def _file_lock(lock_path, timeout=10.0, stale_after=60.0, sleep=time.sleep, clock=time.time):
-    """Cross-process lock via an exclusively created file (works on Windows too)."""
-    lock_path = Path(lock_path)
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
+def _file_lock(lock_path, timeout=10.0, sleep=time.sleep, clock=time.time):
+    """Cross-process mutual exclusion for a read-modify-write of one state file.
+
+    Built on :class:`ProcessLock` (``flock`` / ``msvcrt.locking``): nothing goes stale after a
+    crash, and there is no create-if-absent race. The earlier "create ``X.lock`` exclusively"
+    version raised ``PermissionError`` (not ``FileExistsError``) on Windows when several
+    processes raced, which CI caught.
+    """
+    lock = ProcessLock(lock_path)
     deadline = clock() + timeout
-    while True:
-        try:
-            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            os.close(fd)
-            break
-        except FileExistsError:
-            try:
-                if clock() - lock_path.stat().st_mtime > stale_after:
-                    lock_path.unlink()  # a crashed process left it behind
-                    continue
-            except OSError:
-                pass
-            if clock() > deadline:
-                raise TimeoutError("Could not lock {0}; another upload may be running.".format(lock_path))
-            sleep(0.05)
+    while not lock.acquire():
+        if clock() > deadline:
+            raise TimeoutError("Could not lock {0}; another upload may be running.".format(lock_path))
+        sleep(0.05)
     try:
         yield
     finally:
-        try:
-            lock_path.unlink()
-        except OSError:
-            pass
+        lock.release()
 
 
 class ProcessLock(object):
