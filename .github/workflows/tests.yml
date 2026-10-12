@@ -1,0 +1,62 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install (fresh, from pyproject)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+      - name: CLI smoke test
+        run: |
+          youtube-upload --help
+          python -m youtube_upload --help
+      - name: Tests (Linux, headless Tk under Xvfb)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb python3-tk ffmpeg || true
+          xvfb-run -a python -m pytest
+      - name: Tk diagnostics (Windows)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        run: |
+          python -c "import sys, tkinter; print(sys.version); r = tkinter.Tk(); print('Tk patchlevel', r.tk.call('info', 'patchlevel')); r.destroy()"
+          Get-ChildItem "$env:pythonLocation\tcl" | Select-Object -First 20 | Format-Table Name
+          "TCL_LIBRARY=$env:TCL_LIBRARY TK_LIBRARY=$env:TK_LIBRARY"
+      - name: Tests (Windows)
+        if: runner.os == 'Windows'
+        run: python -m pytest -rs
+
+  build:
+    name: build wheel and sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          python -m pip install --upgrade pip build
+          python -m build
+          python -m pip install dist/*.whl
+          youtube-upload --help

@@ -1,21 +1,58 @@
-# Byte-compiled / optimized / DLL files
+# ---------------------------------------------------------------------------
+# Secrets and per-user state. NEVER commit these (see SECURITY.md).
+# tests/test_repo_hygiene.py fails if any of these become tracked.
+# ---------------------------------------------------------------------------
+# Google OAuth client secrets (both the project's name and Google's download
+# name "client_secret_<id>.apps.googleusercontent.com.json").
+client_secret*.json
+client_secrets*.json
+# Stored user tokens / credentials, wherever they are.
+*credentials*.json
+*.credentials
+token*.json
+*.token.json
+.youtube-upload-*
+.youtube_upload_*
+# Per-account folders used by --accounts-dir / the GUI and their contents.
+accounts/
+.youtube-upload-accounts/
+*_account/
+*_accounts/
+# GUI settings contain local paths and account names.
+gui_settings.json
+*.gui_settings.json
+# Upload ledger, resumable-session state and debug logs.
+.youtube-upload/
+youtube_upload_debug.log
+# Generic key material and env files.
+.env
+.env.*
+*.pem
+*.p12
+*.pfx
+*.key
+
+# The one allowed (placeholder-only) example.
+!examples/client_secrets.example.json
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
 __pycache__/
 *.py[cod]
 *$py.class
-
-# C extensions
 *.so
-
-# Distribution / packaging
 .Python
 env/
+.venv/
+venv/
 build/
 develop-eggs/
 dist/
 downloads/
 eggs/
 .eggs/
-lib/
+/lib/
 lib64/
 parts/
 sdist/
@@ -25,35 +62,33 @@ var/
 *.egg
 
 # PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
 
-# Installer logs
+# Installer / test / coverage output
 pip-log.txt
 pip-delete-this-directory.txt
-
-# Unit test / coverage reports
 htmlcov/
 .tox/
 .coverage
 .coverage.*
 .cache
+.pytest_cache/
 nosetests.xml
 coverage.xml
 *,cover
 .hypothesis/
+.ruff_cache/
+.mypy_cache/
 
-# Translations
+# Misc
 *.mo
 *.pot
-
-# Django stuff:
 *.log
-
-# Sphinx documentation
 docs/_build/
-
-# PyBuilder
 target/
+
+# Editor workspace files
+*.code-workspace
+.vscode/
+.idea/

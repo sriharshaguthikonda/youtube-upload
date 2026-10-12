@@ -1,94 +1,101 @@
-from __future__ import print_function
-import os
+"""Small helpers shared by the CLI and the library code."""
+import re
 import sys
-import locale
-import random
-import time
-import signal
-from contextlib import contextmanager
 
-import googleapiclient.errors
+_REDACTIONS = [
+    # secrets that travel in a URL query or form body
+    (re.compile(r"(?i)([?&;\s](?:upload_id|token|access_token|refresh_token|id_token|code|client_secret|"
+                r"api_key|key|assertion)=)[^&\s'\"<>)]+"), r"\1[redacted]"),
+    (re.compile(r"(?i)\b(Bearer\s+)[A-Za-z0-9._~+/=\-]+"), r"\1[redacted]"),
+    # well-known token shapes, wherever they appear
+    (re.compile(r"ya29\.[A-Za-z0-9_\-]{8,}"), "[redacted]"),
+    (re.compile(r"1//[A-Za-z0-9_\-]{20,}"), "[redacted]"),
+    (re.compile(r"GOCSPX-[A-Za-z0-9_\-]{8,}"), "[redacted]"),
+]
 
-@contextmanager
-def default_sigint():
-    original_sigint_handler = signal.getsignal(signal.SIGINT)
-    signal.signal(signal.SIGINT, signal.SIG_DFL)
+
+def redact(text):
+    """Blank out credentials, upload-session ids and authorization codes found in ``text``.
+
+    Defence in depth: our own messages never include them, but exception texts from the HTTP
+    stack print the full URL, and an upload session URL is a capability.
+    """
+    text = str(text)
+    for pattern, replacement in _REDACTIONS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+def debug(obj, fd=None):
+    """Write ``obj`` to standard error (a no-op when there is no stderr).
+
+    ``pythonw.exe`` (the windowless GUI launcher) has ``sys.stderr = None``.
+    """
+    fd = fd if fd is not None else sys.stderr
+    if fd is None:
+        return
+    obj = redact(obj)
     try:
-        yield
-    finally:
-        signal.signal(signal.SIGINT, original_sigint_handler)
-        
-def get_encoding():
-    return locale.getpreferredencoding()
-    
-def to_utf8(s):
-    """Re-encode string from the default system encoding to UTF-8."""
-    current = locale.getpreferredencoding()
-    if hasattr(s, 'decode'): #Python 3 workaround
-        return (s.decode(current).encode("UTF-8") if s and current != "UTF-8" else s)
-    elif isinstance(s, bytes):
-        return bytes.decode(s)
-    else:
-        return s
-       
-def debug(obj, fd=sys.stderr):
-    """Write obj to standard error."""
-    print(obj, file=fd)
+        print(obj, file=fd)
+    except (UnicodeEncodeError, OSError):
+        # A console that cannot show the text must not abort an upload.
+        try:
+            print(str(obj).encode("ascii", "replace").decode("ascii"), file=fd)
+        except Exception:
+            pass
+
 
 def catch_exceptions(exit_codes, fun, *args, **kwargs):
-    """
-    Catch exceptions on fun(*args, **kwargs) and return the exit code specified
-    in the exit_codes dictionary. Return 0 if no exception is raised.
+    """Run ``fun(*args, **kwargs)`` and return a process exit code.
+
+    ``exit_codes`` maps exception classes to codes (or to callables taking the
+    exception and returning a code). A subclass of a mapped class gets its
+    parent's code (the previous exact-class lookup raised ``KeyError`` for
+    subclasses). Returns 0 when nothing is raised.
     """
     try:
         fun(*args, **kwargs)
         return 0
     except tuple(exit_codes.keys()) as exc:
         debug("[{0}] {1}".format(exc.__class__.__name__, exc))
-        return exit_codes[exc.__class__]
+        for klass in type(exc).__mro__:
+            if klass in exit_codes:
+                code = exit_codes[klass]
+                return code(exc) if callable(code) else code
+        return 1  # unreachable: the except clause guarantees a match
 
-def first(it):
-    """Return first element in iterable."""
-    return it.next()
 
 def string_to_dict(string):
-    """Return dictionary from string "key1=value1, key2=value2"."""
-    if string:
-        pairs = [s.strip() for s in string.split(",")]
-        return dict(pair.split("=") for pair in pairs)
+    """Return a dict from ``"key1=value1, key2=value2"`` (``None`` if empty).
 
-def get_first_existing_filename(prefixes, relative_path):
-    """Get the first existing filename of relative_path seeking on prefixes directories."""
-    for prefix in prefixes:
-        path = os.path.join(prefix, relative_path)
-        if os.path.exists(path):
-            return path
+    Raises ``ValueError`` with a readable message on malformed input.
+    """
+    if not string:
+        return None
+    result = {}
+    for pair in (s.strip() for s in string.split(",")):
+        if not pair:
+            continue
+        if "=" not in pair:
+            raise ValueError("expected key=value, got {0!r}".format(pair))
+        key, value = pair.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise ValueError("empty key in {0!r}".format(pair))
+        result[key] = value.strip()
+    return result or None
 
-def retriable_exceptions(fun, retriable_exceptions, max_retries=None):
-    """Run function and retry on some exceptions (with exponential backoff)."""
-    retry = 0
-    while 1:
-        try:
-            return fun()
-        except tuple(retriable_exceptions) as exc:
-            retry += 1
-            if type(exc) not in retriable_exceptions:
-                raise exc
-            # we want to retry 5xx errors only
-            elif type(exc) == googleapiclient.errors.HttpError and exc.resp.status < 500:
-                raise exc
-            elif max_retries is not None and retry > max_retries:
-                debug("[Retryable errors] Retry limit reached")
-                raise exc
-            else:
-                seconds = random.uniform(0, 2**retry)
-                message = ("[Retryable error {current_retry}/{total_retries}] " +
-                    "{error_type} ({error_msg}). Wait {wait_time} seconds").format(
-                    current_retry=retry, 
-                    total_retries=max_retries or "-", 
-                    error_type=type(exc).__name__, 
-                    error_msg=str(exc) or "-", 
-                    wait_time="%.1f" % seconds,
-                )
-                debug(message)
-                time.sleep(seconds)
+
+def sha256_file(path, cancel_check=None, chunk_size=4 * 1024 * 1024):
+    """SHA-256 hex digest of a file, checking ``cancel_check()`` between chunks."""
+    import hashlib
+    digest = hashlib.sha256()
+    with open(str(path), "rb") as handle:
+        while True:
+            if cancel_check is not None and cancel_check():
+                from .errors import UploadCancelled
+                raise UploadCancelled("Cancelled by user")
+            block = handle.read(chunk_size)
+            if not block:
+                return digest.hexdigest()
+            digest.update(block)

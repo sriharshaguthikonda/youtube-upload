@@ -1,0 +1,13 @@
+# Versions the test suite last passed with (Python 3.12, Linux). Informational: pip install uses the
+# ranges in pyproject.toml, which were also checked at their LOWEST allowed versions on Python 3.9.
+# tkinterdnd2 (optional drag-and-drop) is not part of the automated tests.
+google-api-python-client==2.201.0
+google-auth==2.62.0
+google-auth-oauthlib==1.5.0
+google-auth-httplib2==0.4.4
+progressbar2==4.6.0
+httplib2==0.32.0
+requests==2.34.2
+requests-oauthlib==2.0.0
+oauthlib==4.0.0
+pytest==9.1.1

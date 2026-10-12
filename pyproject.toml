@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "youtube-upload"
+dynamic = ["version"]
+description = "Upload videos to YouTube from the command line or a small desktop GUI (multi-account)"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Arnau Sanchez", email = "pyarnau@gmail.com" }]
+license = { text = "GNU General Public License v3 (GPLv3)" }
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Natural Language :: English",
+    "Operating System :: POSIX",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP",
+]
+# Ranges, not exact pins: this is an application library installed next to
+# other packages. The exact versions the test-suite last passed with are in
+# requirements-tested.txt.
+dependencies = [
+    "google-api-python-client>=2.100,<3",
+    "google-auth>=2.20,<3",
+    "google-auth-oauthlib>=1.0,<2",
+    "google-auth-httplib2>=0.1,<1",
+    "progressbar2>=4.0,<5",
+]
+
+[project.optional-dependencies]
+gui = ["tkinterdnd2>=0.3"]
+dev = ["pytest>=7", "pytest-cov"]
+
+[project.urls]
+Homepage = "https://github.com/sriharshaguthikonda/youtube-upload"
+
+[project.scripts]
+youtube-upload = "youtube_upload.main:run"
+
+[project.gui-scripts]
+youtube-upload-gui = "youtube_upload.gui_app:main"
+
+[tool.setuptools]
+packages = ["youtube_upload", "youtube_upload.auth"]
+
+[tool.setuptools.dynamic]
+version = { attr = "youtube_upload.VERSION" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
