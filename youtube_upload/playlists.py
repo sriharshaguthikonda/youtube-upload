@@ -1,4 +1,5 @@
 import locale
+import sys
 
 from .lib import debug
 
@@ -30,8 +31,27 @@ def create_playlist(youtube, title, privacy):
     }).execute()
     return response.get("id")
 
+def video_in_playlist(youtube, playlist_id, video_id):
+    """Return True if the video is already in the playlist."""
+    playlist_items = youtube.playlistItems()
+    request = playlist_items.list(
+        part="id",
+        playlistId=playlist_id,
+        videoId=video_id,
+        maxResults=1,
+    )
+    while request:
+        results = request.execute()
+        if results.get("items"):
+            return True
+        request = playlist_items.list_next(request, results)
+    return False
+
 def add_video_to_existing_playlist(youtube, playlist_id, video_id):
     """Add video to playlist (by identifier) and return the playlist ID."""
+    if video_in_playlist(youtube, playlist_id, video_id):
+        debug("Video already in playlist: {0}".format(video_id))
+        return None
     debug("Adding video to playlist: {0}".format(playlist_id))
     return youtube.playlistItems().insert(part="snippet", body={
         "snippet": {
@@ -45,8 +65,21 @@ def add_video_to_existing_playlist(youtube, playlist_id, video_id):
     
 def add_video_to_playlist(youtube, video_id, title, privacy="public"):
     """Add video to playlist (by title) and return the full response."""
-    playlist_id = get_playlist(youtube, title) or \
-        create_playlist(youtube, title, privacy)
+    playlist_id = get_playlist(youtube, title)
+    if not playlist_id:
+        # Ask user for confirmation when running interactively; otherwise create silently.
+        create = True
+        if sys.stdin is not None and sys.stdin.isatty():
+            try:
+                answer = input(f'Playlist "{title}" not found. Create it? [y/N]: ').strip().lower()
+                create = answer in ("y", "yes")
+            except (EOFError, KeyboardInterrupt):
+                create = False
+        if create:
+            playlist_id = create_playlist(youtube, title, privacy)
+        else:
+            debug(f'Skipping playlist creation for "{title}".')
+            return None
     if playlist_id:
         return add_video_to_existing_playlist(youtube, playlist_id, video_id)
     else:

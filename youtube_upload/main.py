@@ -17,9 +17,12 @@ Upload a video to Youtube from the command-line.
 
 import os
 import sys
+import re
 import optparse
 import collections
 import webbrowser
+import hashlib
+from pathlib import Path
 from io import open
 
 import googleapiclient.errors
@@ -32,44 +35,100 @@ from . import upload_video
 from . import categories
 from . import lib
 from . import playlists
+from . import content_validation
 
 # http://code.google.com/p/python-progressbar (>= 2.3)
 try:
-    import progressbar2
+    import progressbar2 as progressbar
 except ImportError:
     progressbar = None
 
 
-class InvalidCategory(Exception): pass
+class InvalidCategory(Exception):
+    pass
 
 
-class OptionsError(Exception): pass
+class UploadCancelled(Exception):
+    """Raised when an upload is cancelled by the user via a progress callback."""
+    pass
 
 
-class AuthenticationError(Exception): pass
+class OptionsError(Exception):
+    pass
 
 
-class RequestError(Exception): pass
+class InvalidVideoFormat(Exception):
+    pass
+
+
+class AuthenticationError(Exception):
+    pass
+
+
+class RequestError(Exception):
+    pass
 
 
 EXIT_CODES = {
     OptionsError: 2,
+    InvalidVideoFormat: 2,
     InvalidCategory: 3,
     RequestError: 3,
     AuthenticationError: 4,
     oauth2client.client.FlowExchangeError: 4,
     NotImplementedError: 5,
+    UploadCancelled: 6,
+}
+
+SUPPORTED_VIDEO_EXTENSIONS = {
+    "mov",
+    "mpeg",
+    "mpeg1",
+    "mpeg2",
+    "mpeg4",
+    "mp4",
+    "mpg",
+    "avi",
+    "wmv",
+    "mpegps",
+    "flv",
+    "3gpp",
+    "3gp",
+    "webm",
+    "dnxhr",
+    "prores",
+    "cineform",
+    "hevc",
+    "h265",
 }
 
 WATCH_VIDEO_URL = "https://www.youtube.com/watch?v={id}"
 
 debug = lib.debug
+DEBUG_ENABLED = False
+def log_debug(message):
+    if DEBUG_ENABLED:
+        debug(message)
+        try:
+            logfile = Path.cwd() / "youtube_upload_debug.log"
+            with open(logfile, "a", encoding="utf-8", newline="\n") as logf:
+                logf.write(str(message) + "\n")
+        except Exception:
+            # Never let logging failures crash the app
+            pass
 struct = collections.namedtuple
+PROGRESS_FACTORY = None
 
 
 def open_link(url):
     """Opens a URL link in the client's browser."""
     webbrowser.open(url)
+
+
+def set_progress_factory(factory):
+    """Register a callable that receives video_path -> progressinfo(callback, finish)."""
+    global PROGRESS_FACTORY
+    PROGRESS_FACTORY = factory
 
 
 def get_progress_info():
@@ -116,10 +175,96 @@ def get_category_id(category):
             raise InvalidCategory(msg)
 
 
+def sanitize_title(title):
+    """Sanitize a title to keep it YouTube-friendly and within limits."""
+    cleaned = "".join(ch for ch in title if ch.isprintable() and ch not in ("\n", "\r", "\t"))
+    cleaned = cleaned.replace("_", " ").replace("-", " ")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    # YouTube titles are limited to 100 characters
+    return cleaned[:100] or "Untitled"
+
+
+def default_title_from_video_path(video_path):
+    """Derive a safe default title from a video path."""
+    return sanitize_title(Path(video_path).stem)
+
+
+def validate_video_format(video_path):
+    """Raise InvalidVideoFormat if the file extension is not supported by YouTube."""
+    suffix = Path(video_path).suffix.lower().lstrip(".")
+    if suffix not in SUPPORTED_VIDEO_EXTENSIONS:
+        raise InvalidVideoFormat(
+            "Unsupported video format for '{0}'. Accepted extensions: {1}".format(
+                video_path, ", ".join(sorted(SUPPORTED_VIDEO_EXTENSIONS))
+            )
+        )
+
+
+def _compute_file_hash(path, chunk_size=1024 * 1024):
+    """Return a SHA-256 hex digest for the given file path."""
+    h = hashlib.sha256()
+    with open(path, "rb") as handle:
+        chunk = handle.read(chunk_size)
+        while chunk:
+            h.update(chunk)
+            chunk = handle.read(chunk_size)
+    return h.hexdigest()
+
+
+def _build_hash_tag(path, prefix="hash:"):
+    return f"{prefix}{_compute_file_hash(path)}"
+
+
+def _find_existing_video(youtube, title=None, hash_tag=None, max_results=5):
+    """Return a videoId if a matching video exists on the channel."""
+    query = hash_tag or title
+    if not query:
+        return None
+    request = youtube.search().list(
+        part="id,snippet",
+        q=query,
+        type="video",
+        forMine=True,
+        maxResults=max_results,
+    )
+    results = request.execute().get("items", [])
+    for item in results:
+        video_id = item.get("id", {}).get("videoId")
+        if hash_tag:
+            # Hash search already acts as the match
+            return video_id
+        snippet = item.get("snippet", {})
+        if title and snippet.get("title") == title:
+            return video_id
+
+
+def create_internet_shortcut(video_path, video_url):
+    """Create a .url internet shortcut next to the uploaded video file."""
+    path = Path(video_path)
+    shortcut_path = path.parent / (path.name + ".url")
+    shortcut_path_no_url = path.parent / (path.name + ".m3u")
+    
+    log_debug("Creating shortcut: video_path={0}, shortcut_path={1}".format(video_path, shortcut_path))
+    content = "[InternetShortcut]\nURL={0}\n".format(video_url)
+    try:
+        with open(shortcut_path, "w", encoding="utf-8", newline="\r\n") as shortcut_file:
+            shortcut_file.write(content)
+        log_debug("Wrote shortcut file bytes={0}".format(len(content)))
+        with open(shortcut_path_no_url, "w", encoding="utf-8", newline="\r\n") as shortcut_file:
+            shortcut_file.write(content)
+    except Exception as exc:
+        debug("Failed to write shortcut {0}: {1}".format(shortcut_path, exc))
+        return None
+    return shortcut_path
+
+
 def upload_youtube_video(youtube, options, video_path, total_videos, index):
     """Upload video with index (for split videos)."""
+    validate_video_format(video_path)
+    content_validation.validate_video_content(video_path)
     u = lib.to_utf8
-    title = u(options.title)
+    base_title = options.title or default_title_from_video_path(video_path)
+    title = u(base_title)
     if hasattr(u('string'), 'decode'):
         description = u(options.description or "").decode("string-escape")
     else:
@@ -131,8 +276,25 @@ def upload_youtube_video(youtube, options, video_path, total_videos, index):
     ns = dict(title=title, n=index + 1, total=total_videos)
     title_template = u(options.title_template)
     complete_title = (title_template.format(**ns) if total_videos > 1 else title)
-    progress = get_progress_info()
+    progress = PROGRESS_FACTORY(video_path) if PROGRESS_FACTORY else get_progress_info()
     category_id = get_category_id(options.category)
+
+    hash_tag = None
+    if options.skip_if_exists == "hash":
+        hash_tag = _build_hash_tag(video_path)
+        if hash_tag not in tags:
+            tags.append(hash_tag)
+
+    if options.skip_if_exists:
+        existing_video_id = _find_existing_video(
+            youtube,
+            title=complete_title if options.skip_if_exists == "title" else None,
+            hash_tag=hash_tag if options.skip_if_exists == "hash" else None,
+        )
+        if existing_video_id:
+            debug("Skipping upload; video already exists: {0}".format(existing_video_id))
+            return existing_video_id
+
     request_body = {
         "snippet": {
             "title": complete_title,
@@ -168,12 +330,53 @@ def upload_youtube_video(youtube, options, video_path, total_videos, index):
 
 def get_youtube_handler(options):
     """Return the API Youtube object."""
-    home = os.path.expanduser("~")
-    default_credentials = os.path.join(home, ".youtube-upload-credentials.json")
-    client_secrets = options.client_secrets or os.path.join(home, ".client_secrets.json")
-    credentials = options.credentials_file or default_credentials
+    pkg_dir = Path(__file__).resolve().parent
+    repo_dir = pkg_dir.parent
+    accounts_dir = None
+    use_accounts_dir = bool(options.account) or bool(options.accounts_dir)
+    if use_accounts_dir:
+        accounts_dir = (Path(options.accounts_dir)
+                        if options.accounts_dir
+                        else Path.home() / ".youtube-upload-accounts")
+
+    client_secrets = options.client_secrets
+    if not client_secrets:
+        # Prefer account directory secrets when an accounts dir is used
+        if accounts_dir:
+            account_client_secrets = accounts_dir / "client_secrets.json"
+            if account_client_secrets.exists():
+                client_secrets = account_client_secrets
+        # Fall back to module-local or repo root defaults
+        if not client_secrets:
+            pkg_default = pkg_dir / "client_secrets.json"
+            repo_default = repo_dir / "client_secrets.json"
+            if pkg_default.exists():
+                client_secrets = pkg_default
+            else:
+                client_secrets = repo_default
+
+    credentials = options.credentials_file
+    if not credentials:
+        if use_accounts_dir:
+            accounts_dir.mkdir(parents=True, exist_ok=True)
+            account_label = options.account or "default"
+            credentials = accounts_dir / f"{account_label}.json"
+            debug("Using account profile: {0}".format(account_label))
+        else:
+            # Keep credentials near the code for consistency (legacy default)
+            credentials = pkg_dir / ".youtube-upload-credentials.json"
+
+    client_secrets = str(client_secrets)
+    credentials = str(credentials)
+
     debug("Using client secrets: {0}".format(client_secrets))
     debug("Using credentials file: {0}".format(credentials))
+    if not os.path.exists(client_secrets):
+        raise OptionsError(
+            "client_secrets.json not found. Tried: {0}. "
+            "Place it next to youtube_upload/main.py or in the repo root, "
+            "or pass --client-secrets.".format(client_secrets)
+        )
     get_code_callback = (auth.browser.get_code
                          if options.auth_browser else auth.console.get_code)
     return auth.get_resource(client_secrets, credentials,
@@ -182,7 +385,7 @@ def get_youtube_handler(options):
 
 def parse_options_error(parser, options):
     """Check errors in options."""
-    required_options = ["title"]
+    required_options = []
     missing = [opt for opt in required_options if not getattr(options, opt)]
     if missing:
         parser.print_usage()
@@ -192,25 +395,54 @@ def parse_options_error(parser, options):
 
 def run_main(parser, options, args, output=sys.stdout):
     """Run the main scripts from the parsed options/args."""
+    # When launched via pythonw (GUI), sys.stdout can be None; guard writes.
+    if output is None:
+        class _NullWriter:
+            def write(self, *_args, **_kwargs):
+                return None
+
+            def flush(self):
+                return None
+
+        output = _NullWriter()
     parse_options_error(parser, options)
-    youtube = get_youtube_handler(options)
-
-    if youtube:
-        for index, video_path in enumerate(args):
-            video_id = upload_youtube_video(youtube, options, video_path, len(args), index)
-            video_url = WATCH_VIDEO_URL.format(id=video_id)
-            debug("Video URL: {0}".format(video_url))
-            if options.open_link:
-                open_link(video_url)  # Opens the Youtube Video's link in a webbrowser
-
-            if options.thumb:
-                youtube.thumbnails().set(videoId=video_id, media_body=options.thumb).execute()
-            if options.playlist:
-                playlists.add_video_to_playlist(youtube, video_id,
-                                                title=lib.to_utf8(options.playlist), privacy=options.privacy)
-            output.write(video_id + "\n")
+    account_labels = []
+    if options.accounts:
+        account_labels = [label.strip() for label in options.accounts.split(",") if label.strip()]
+    elif options.account:
+        account_labels = [options.account]
     else:
-        raise AuthenticationError("Cannot get youtube resource")
+        account_labels = [None]
+
+    for account_label in account_labels:
+        if account_label:
+            debug("Starting uploads for account: {0}".format(account_label))
+            options.account = account_label  # Ensure downstream uses this label
+        youtube = get_youtube_handler(options)
+
+        if youtube:
+            for index, video_path in enumerate(args):
+                try:
+                    video_id = upload_youtube_video(youtube, options, video_path, len(args), index)
+                except InvalidVideoFormat as exc:
+                    debug(f"[SKIP] {video_path}: {exc}")
+                    continue
+
+                video_url = WATCH_VIDEO_URL.format(id=video_id)
+                debug("Video URL: {0}".format(video_url))
+                if options.open_link:
+                    open_link(video_url)  # Opens the Youtube Video's link in a webbrowser
+
+                log_debug("Post-upload actions for video_path={0}".format(video_path))
+                create_internet_shortcut(video_path, video_url)
+                if options.thumb:
+                    youtube.thumbnails().set(videoId=video_id, media_body=options.thumb).execute()
+                if options.playlist:
+                    playlists.add_video_to_playlist(youtube, video_id,
+                                                    title=lib.to_utf8(options.playlist), privacy=options.privacy)
+                output.write(video_id + "\n")
+        else:
+            raise AuthenticationError("Cannot get youtube resource")
 
 
 def main(arguments):
@@ -258,6 +490,9 @@ def main(arguments):
                       help='Template for multiple videos (default: {title} [{n}/{total}])')
     parser.add_option('', '--embeddable', dest='embeddable', default=True,
                       help='Video is embeddable')
+    parser.add_option('', '--skip-if-exists', dest='skip_if_exists',
+                      choices=('title', 'hash'), default=None,
+                      help='Skip upload if a video exists with matching title or content hash')
 
     # Authentication
     parser.add_option('', '--client-secrets', dest='client_secrets',
@@ -266,14 +501,27 @@ def main(arguments):
                       type="string", help='Credentials JSON file')
     parser.add_option('', '--auth-browser', dest='auth_browser', action='store_true',
                       help='Open a GUI browser to authenticate if required')
+    parser.add_option('', '--account', dest='account', type="string",
+                      help='Account label to isolate credentials (stored as <accounts-dir>/<label>.json)')
+    parser.add_option('', '--accounts', dest='accounts', type="string",
+                      help='Comma-separated list of account labels to upload to multiple accounts in one run')
+    parser.add_option('', '--accounts-dir', dest='accounts_dir', type="string",
+                      help='Directory to store account credential files (default: ~/.youtube-upload-accounts when --account/--accounts is used)')
 
     # Additional options
     parser.add_option('', '--chunksize', dest='chunksize', type="int",
                       default=1024 * 1024 * 8, help='Update file chunksize')
     parser.add_option('', '--open-link', dest='open_link', action='store_true',
                       help='Opens a url in a web browser to display the uploaded video')
+    parser.add_option('', '--debug', dest='debug', action='store_true',
+                      help='Enable verbose debug logging')
 
     options, args = parser.parse_args(arguments)
+
+    global DEBUG_ENABLED
+    DEBUG_ENABLED = bool(options.debug)
+    if DEBUG_ENABLED:
+        debug("Debug logging enabled")
 
     if options.description_file is not None and os.path.exists(options.description_file):
         with open(options.description_file, encoding="utf-8") as file:

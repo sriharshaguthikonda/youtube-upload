@@ -1,0 +1,33 @@
+{
+  "category": "",
+  "privacy": "public",
+  "publish_at": "",
+  "skip_if_exists": "hash",
+  "secrets_path": "C:/Windows_software/youtube-upload/youtube_upload/General_account/client_secrets.json",
+  "credentials_path": "C:/Windows_software/youtube-upload/youtube_upload/General_account/default.json",
+  "account": "General",
+  "accounts": "",
+  "accounts_dir": "C:\\Windows_software\\youtube-upload\\youtube_upload\\General_account",
+  "auth_browser": false,
+  "open_link": false,
+  "debug": true,
+  "thumbnail_path": null,
+  "video_paths": [
+    "Z:/edu vedios/Aortic Valve & Root; from Developmental Biology to TAVI/Abdulwahid Al Mulla - Aortic Valve Replacement at Hamad Hospital.mp4",
+    "Z:/edu vedios/Aortic Valve & Root; from Developmental Biology to TAVI/Ahmed Al-Motarreb - Rheumatic Heart Disease in Yemen.mp4",
+    "Z:/edu vedios/Aortic Valve & Root; from Developmental Biology to TAVI/Carlo Di Mario - TAVI; Current and Future.mp4",
+    "Z:/edu vedios/Aortic Valve & Root; from Developmental Biology to TAVI/Lights Out_ Sleep is Still the Best Medicine.mp4",
+    "Z:/edu vedios/Aortic Valve & Root; from Developmental Biology to TAVI/Magdi Yacoub - The Bicuspid Aortic Valve from Science to Practice.mp4",
+    "Z:/edu vedios/Aortic Valve & Root; from Developmental Biology to TAVI/Magdi Yacoub - The Living Aortic Root.mp4",
+    "Z:/edu vedios/Aortic Valve & Root; from Developmental Biology to TAVI/Navaneeth Krishnamoorthy - Designer Collagen Mimetic Peptide Scaffolds for Tissue Engineering.mp4",
+    "Z:/edu vedios/Aortic Valve & Root; from Developmental Biology to TAVI/Rheumatic Heart Disease - Group Discussion.mp4",
+    "Z:/edu vedios/Aortic Valve & Root; from Developmental Biology to TAVI/Robert Bonow - Global Burden of RHD.mp4",
+    "Z:/edu vedios/Aortic Valve & Root; from Developmental Biology to TAVI/Robert Bonow - Guidelines for Aortic Valve Replacement; an International Perspective.mp4",
+    "Z:/edu vedios/Aortic Valve & Root; from Developmental Biology to TAVI/Ryo Torii - In Vivo Measurement of Flow Dynamics and Aortic Wall Shear Stress.mp4",
+    "Z:/edu vedios/Aortic Valve & Root; from Developmental Biology to TAVI/Sherif Helmy - Non-Invasive Pre-operative Assessment of the Aortic Valve.mp4",
+    "Z:/edu vedios/Aortic Valve & Root; from Developmental Biology to TAVI/Susy Kotit - Epidemiology of Rheumatic Heart Disease in Aswan.mp4",
+    "Z:/edu vedios/Aortic Valve & Root; from Developmental Biology to TAVI/Thomas Brand - Heart Valve development; the Role of Genetics and Biomechanics.mp4",
+    "Z:/edu vedios/Aortic Valve & Root; from Developmental Biology to TAVI/Welcome Address - Abdulwahid Al Mulla and Magdi Yacoub.mp4"
+  ],
+  "geometry": "839x1187+2427+170"
+}

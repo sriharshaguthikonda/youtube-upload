@@ -37,6 +37,29 @@ Setup
 
 You'll see that there is no email/password options. Instead, the Youtube API uses [OAuth 2.0](https://developers.google.com/accounts/docs/OAuth2) to authenticate the upload. The first time you try to upload a video, you will be asked to follow a URL in your browser to get an authentication token. If you have multiple channels for the logged in user, you will also be asked to pick which one you want to upload the videos to. You can use multiple credentials, just use the option ```--credentials-file```. Also, check the [token expiration](https://developers.google.com/youtube/v3/) policies.
 
+### Multiple accounts
+
+To keep separate credentials for different YouTube accounts/channels, use per-account profiles:
+
+```
+$ youtube-upload --account=work  --title="Work video"   work.mp4
+$ youtube-upload --account=personal --title="Home vlog" home.mp4
+```
+
+By default these are stored in `~/.youtube-upload-accounts/<account>.json`. You can override the directory:
+
+```
+$ youtube-upload --accounts-dir="D:/yt-profiles" --account=clientA video.mp4
+```
+
+You can also upload the same set of files to multiple accounts in a single run:
+
+```
+$ youtube-upload --accounts=work,clientA --title="Launch teaser" teaser.mp4
+```
+
+When `--account/--accounts` is used, the tool prefers `client_secrets.json` in the chosen accounts directory. If absent, it falls back to `youtube_upload/client_secrets.json` or the repo root.
+
 The package used to include a default ```client_secrets.json``` file. It does not work anymore, Google has revoked it. So you now must [create and use your own OAuth 2.0 file](https://developers.google.com/youtube/registering_an_application), it's a free service. Steps:
 
 * Go to the Google [console](https://console.developers.google.com/).
@@ -52,6 +75,28 @@ The package used to include a default ```client_secrets.json``` file. It does no
 
 Examples
 ========
+
+GUI app (Tkinter)
+-----------------
+
+You can use the bundled GUI instead of the CLI:
+
+```
+$ python youtube_upload/gui_app.py
+```
+
+Key fields:
+
+* **Title** (required) and optional Description, Tags, Category, Playlist, Privacy, Publish at, Thumbnail.
+* **Client secrets**: leave blank to auto-resolve; when an accounts directory is chosen it will look for `client_secrets.json` there first.
+* **Credentials file**: optional explicit path. If blank, it is derived from account settings.
+* **Account label**: isolates credentials per label (stored as `<accounts-dir>/<label>.json`).
+* **Accounts (comma separated)**: upload the selected videos to multiple profiles in one run.
+* **Accounts dir**: root folder for per-account credentials; defaults to `~/.youtube-upload-accounts` when an account is specified.
+* **Authenticate with browser (GUI)**: uses browser-based OAuth; leave unchecked to use console flow.
+* **Open uploaded video link after upload**: opens each uploaded video URL in your browser.
+
+Add videos with **Choose Video(s)** and click **Upload**.
 
 * Upload a video (a valid `~/.client_secrets.json` should exist, check the Setup section):
 
