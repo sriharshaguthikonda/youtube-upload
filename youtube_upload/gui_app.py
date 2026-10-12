@@ -447,7 +447,7 @@ class UploadGUI:
     def _settings_path_for_accounts_dir(self, accounts_dir):
         if accounts_dir:
             return Path(accounts_dir) / "gui_settings.json"
-        return Path.home() / ".youtube_upload_gui_settings.json"
+        return (paths.home_dir() or paths.app_home()) / ".youtube_upload_gui_settings.json"
 
     @property
     def _settings_path(self):

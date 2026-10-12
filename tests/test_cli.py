@@ -302,7 +302,7 @@ def test_login_and_logout_actions_use_the_account_files(world, monkeypatch):
 def test_legacy_default_credentials_are_copied_to_the_per_user_folder(tmp_path, monkeypatch):
     from tests.test_auth import write_legacy_format
     legacy = write_legacy_format(tmp_path / "legacy.json")
-    monkeypatch.setattr(main, "_LEGACY_DEFAULT_CREDENTIALS", (legacy,))
+    monkeypatch.setattr(main, "_legacy_default_credentials", lambda: (legacy,))
     write_client_secrets(paths.app_home() / "client_secrets.json")
     options, _ = main.build_parser().parse_args([])
     notes = []
@@ -483,3 +483,48 @@ def test_failure_summary_is_printed_once_not_twice(world, tmp_path, monkeypatch,
     assert err.count("not a recognised video container") == 2
     assert err.count("Summary:") == 1
     assert "1 of 1 requested upload(s) did not complete" in err
+
+
+# ------------------------------------------------ containers without a resolvable home directory
+
+@pytest.fixture
+def no_home(monkeypatch, tmp_path):
+    """Emulate `docker run --user 12345`: no HOME, no passwd entry, no XDG/APPDATA."""
+    for name in ("HOME", "USERPROFILE", "XDG_CONFIG_HOME", "APPDATA"):
+        monkeypatch.delenv(name, raising=False)
+
+    def boom(cls=None):
+        raise RuntimeError("Could not determine home directory.")
+    monkeypatch.setattr(Path, "home", classmethod(boom))
+    monkeypatch.setenv("YOUTUBE_UPLOAD_HOME", str(tmp_path / "cfg"))
+
+
+def test_the_app_imports_and_runs_without_a_home_directory(no_home, tmp_path):
+    env = {k: v for k, v in os.environ.items() if k not in ("HOME", "USERPROFILE", "XDG_CONFIG_HOME", "APPDATA")}
+    env.update(PYTHONPATH=str(REPO), YOUTUBE_UPLOAD_HOME=str(tmp_path / "cfg2"))
+    code = ("import pathlib\n"
+            "def boom(*a, **k): raise RuntimeError('Could not determine home directory.')\n"
+            "pathlib.Path.home = classmethod(boom)\n"
+            "import youtube_upload.main as m\n"
+            "import sys; sys.exit(m.lib.catch_exceptions(m.EXIT_CODES, m.main, ['--list-accounts']))\n")
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env,
+                            timeout=60, cwd=str(REPO))
+    assert result.returncode == 0, result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_accounts_work_without_a_home_directory(no_home, tmp_path):
+    options, _ = main.build_parser().parse_args(["--accounts-dir", str(tmp_path / "a")])
+    write_client_secrets(tmp_path / "a" / "client_secrets.json")
+    context = main.resolve_account(options, "work", lambda m: None)
+    assert context.credentials == tmp_path / "a" / "work.json"
+    default_dir = paths.default_accounts_dir()                  # no legacy folder to look for
+    assert default_dir == tmp_path / "cfg" / "accounts"
+
+
+def test_without_home_or_override_the_error_says_what_to_set(monkeypatch):
+    for name in ("YOUTUBE_UPLOAD_HOME", "HOME", "USERPROFILE", "XDG_CONFIG_HOME", "APPDATA"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: (_ for _ in ()).throw(RuntimeError("no home"))))
+    with pytest.raises(OptionsError, match="YOUTUBE_UPLOAD_HOME"):
+        paths.app_home()

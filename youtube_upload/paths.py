@@ -23,21 +23,44 @@ _WINDOWS_RESERVED = {"con", "prn", "aux", "nul"} | {
 _LABEL_RE = re.compile(r"^\w(?:[\w.\- ]{0,62}[\w\-])?$")
 
 
+def home_dir():
+    """The user's home directory, or ``None`` where there is none.
+
+    ``Path.home()`` raises in containers started with an arbitrary UID that has no passwd
+    entry (``docker run --user 12345``, many Kubernetes setups); that must not stop the app.
+    """
+    try:
+        return Path.home()
+    except (RuntimeError, KeyError, OSError):
+        return None
+
+
 def app_home():
     """Return the per-user data directory (not created)."""
     override = os.environ.get(ENV_HOME)
     if override:
         return Path(override).expanduser()
     if os.name == "nt":
-        base = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
-        return Path(base) / "youtube-upload"
-    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+        base = os.environ.get("APPDATA")
+        if not base:
+            home = home_dir()
+            base = str(home / "AppData" / "Roaming") if home else None
+    else:
+        base = os.environ.get("XDG_CONFIG_HOME")
+        if not base:
+            home = home_dir()
+            base = str(home / ".config") if home else None
+    if not base:
+        raise OptionsError(
+            "Cannot work out a per-user folder (no home directory). Set the environment variable "
+            "{0} to a writable folder.".format(ENV_HOME))
     return Path(base) / "youtube-upload"
 
 
 def legacy_accounts_dir():
-    """Default accounts directory used by earlier versions."""
-    return Path.home() / ".youtube-upload-accounts"
+    """Default accounts directory used by earlier versions (``None`` without a home)."""
+    home = home_dir()
+    return home / ".youtube-upload-accounts" if home else None
 
 
 def default_accounts_dir():
@@ -46,7 +69,7 @@ def default_accounts_dir():
     An existing legacy directory keeps being used so saved sign-ins are found.
     """
     legacy = legacy_accounts_dir()
-    if legacy.is_dir():
+    if legacy is not None and legacy.is_dir():
         return legacy
     return app_home() / "accounts"
 

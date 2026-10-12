@@ -257,10 +257,12 @@ def validate_options(options, args, need_videos=True, warn=debug):
 
 AccountContext = namedtuple("AccountContext", "label client_secrets credentials")
 
-_LEGACY_DEFAULT_CREDENTIALS = (
-    Path.home() / ".youtube-upload-credentials.json",
-    Path(__file__).resolve().parent / ".youtube-upload-credentials.json",
-)
+def _legacy_default_credentials():
+    """Where earlier versions kept the default account's sign-in (checked lazily: no home is fine)."""
+    home = paths.home_dir()
+    found = [home / ".youtube-upload-credentials.json"] if home else []
+    found.append(Path(__file__).resolve().parent / ".youtube-upload-credentials.json")
+    return tuple(found)
 
 
 def _client_secrets_candidates(accounts_dir):
@@ -269,7 +271,8 @@ def _client_secrets_candidates(accounts_dir):
     if accounts_dir is not None:
         candidates.append((accounts_dir / "client_secrets.json", False))
     candidates.append((paths.app_home() / "client_secrets.json", False))
-    candidates.append((Path.home() / "client_secrets.json", False))
+    if paths.home_dir() is not None:
+        candidates.append((paths.home_dir() / "client_secrets.json", False))
     # Deprecated: inside the source tree, where it can be committed by accident.
     candidates.append((pkg_dir / "client_secrets.json", True))
     candidates.append((pkg_dir.parent / "client_secrets.json", True))
@@ -324,7 +327,7 @@ def _migrate_legacy_default(target, notify):
     """Copy a sign-in saved by older versions to the per-user location (non-destructive)."""
     if target.exists():
         return
-    for legacy in _LEGACY_DEFAULT_CREDENTIALS:
+    for legacy in _legacy_default_credentials():
         if legacy.is_file():
             try:
                 creds, _ = auth.load_stored_credentials(legacy)
