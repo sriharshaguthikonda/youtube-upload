@@ -75,6 +75,17 @@ and in the issue #16 comments.
   `Can't find a usable init.tcl` raised by `tk.Tk()` in a random test - the fixture now retries).
   That is a headless CI desktop, not a human using the window.
 
+* **Second review pass (findings A–P)**: every finding was reproduced by a failing test first; the
+  fixes are in `f0b6e5b` (auth/loopback/redaction), `f8cb9ed` (GUI) and `982f857` (upload core). Guards:
+  `tests/test_review_findings.py` (mutation-checked: the session-recording and single-chunk tests fail
+  when the fix is removed) and `tests/test_crash_recovery_fuzz.py` (40 seeded crash/fault scenarios incl.
+  single-chunk files and random Cancel, 10 multi-file scenarios, 20 unwritable-state-folder scenarios).
+  Note: the fuzz alone does **not** catch removal of the early session record, because skip mode has a
+  second safety net (remote scan); the dedicated tests do.
+* Local results on this commit: 480 passed / 2 skipped (3.12, no Tk); 528 passed / 1 skipped (3.9 and
+  3.14 with Tk under Xvfb, and 3.9 on the lowest allowed dependency versions). Skips: "needs a non-root
+  POSIX user" and (3.12 only) no `tkinter`.
+
 ## 5. NOT verified — do not claim otherwise
 
 1. **No real Google sign-in, no real upload.** Google's live behaviour is unobserved: whether the
@@ -86,6 +97,12 @@ and in the issue #16 comments.
 3. **macOS** untested.
 4. Behaviour with `tkinterdnd2` installed (drag and drop) is untested.
 5. Very large files (multi-GB) and slow links: logic is covered, wall-clock behaviour is not.
+6. Locking on network file systems (NFS/SMB) is unobserved; `flock` semantics vary.
+7. Whether Google accepts omitting `categoryId` and the cleaned description/tags exactly as the
+   uploader now sends them is covered only by the fake server.
+8. GUI: `Browse Folder` scans recursively on the UI thread (a huge tree can freeze the window
+   briefly); the worker is a daemon thread, so closing the window mid-upload stops it without a
+   final status. The chunk size is not exposed in the GUI.
 
 ## 6. Owner-only actions (the agent could not and did not do these)
 
@@ -103,7 +120,14 @@ OAuth consent screen (7-day token expiry in "Testing").
 * `retry.Retrier` is the only place that sleeps/retries; `upload_video.upload` resumes via public
   attributes (`resumable_uri`, `resumable_progress`) after its own status query. If a future
   `google-api-python-client` changes `next_chunk`, `tests/test_uploader.py` (real client) fails.
-* A crash during the *first* chunk leaves no session record (one chunk of work is lost, no duplicate).
+* The resumable-session URI is persisted the instant Google issues it (`_SessionRecordingHttp` in
+  `upload_video.py`), so even a single-request file that crashes after the server committed can
+  resume. If the state folder is unwritable (disk full, antivirus), the upload still completes; only
+  resumability is lost, and `--skip-if-exists hash` still prevents a duplicate.
+* `ProcessLock` (flock / `msvcrt.locking`) guards the ledger and an in-flight lock per
+  (channel, file hash). On file systems that cannot lock (some NFS/SMB mounts) it degrades to a
+  no-op and says so; two simultaneous runs on such a share are then not excluded.
+* The `hash:<sha256>` tag is public metadata on the video.
 * GUI: worker thread posts closures to a queue; never call a widget from the worker.
 * Exit codes: 0 ok, 2 options, 3 request/quota, 4 auth, 6 cancelled, 7 partial, 130 interrupted.
 

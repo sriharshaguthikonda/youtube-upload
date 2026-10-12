@@ -118,6 +118,8 @@ youtube-upload --title "Beethoven" --description "Anne Sophie Mutter" \
   `--chunksize BYTES` (multiple of 262144), `--max-retries N`, `--no-verify`, `--open-link`, `--debug`.
 * Split a long video first with `examples/split_video_for_youtube.sh` (uses ffmpeg).
 * Behind a proxy? Set `https_proxy` / `http_proxy` as usual.
+* `YOUTUBE_UPLOAD_HTTP_TIMEOUT` (seconds, default 300) bounds each network call so a stalled
+  connection fails and is retried instead of hanging forever.
 
 ## Several accounts
 
@@ -130,6 +132,8 @@ youtube-upload --list-accounts                              # what is signed in
 youtube-upload --accounts-dir D:/yt --account clientA video.mp4
 ```
 
+* `--credentials-file` names exactly **one** sign-in, so it cannot be combined with `--accounts`.
+  In the GUI, a typed accounts folder takes effect (and its saved settings load) when you press Enter, pick it from the list, or leave the field.
 * Account folder: `--accounts-dir`, else `~/.youtube-upload-accounts` if it already exists, else
   the per-user folder's `accounts`. Credentials: `<folder>/<label>.json`; client secrets:
   `<folder>/client_secrets.json`.
@@ -163,7 +167,10 @@ youtube-upload --accounts-dir D:/yt --account clientA video.mp4
   100 units per call. `--skip-if-exists title` matches titles case-insensitively. Skipped files still
   get their follow-ups (thumbnail, playlist, shortcut).
 * Without the option, uploading a file that was uploaded before only prints a warning.
-* **Resume:** the upload session is saved after every chunk (owner-only file). Kill the program,
+* `--skip-if-exists hash` adds a `hash:<sha256>` **tag** to the video. Tags are public metadata,
+  so anyone viewing the video's tags can see the file's SHA-256 (not the file). If YouTube rejects
+  the tag, the upload is retried once without it and the local record is used instead.
+* **Resume:** the upload session is saved the moment Google issues it, even for files that go up in a single request (owner-only file). Kill the program,
   lose the network, reboot: run the same command again and it continues where the server left off.
   A session is only reused for the *same* file content and metadata and expires after 5 days.
 * **Retries:** only temporary failures (network errors, 408/429/5xx, rate limits) are retried, with
