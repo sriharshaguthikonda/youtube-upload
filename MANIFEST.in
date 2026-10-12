@@ -1,0 +1,7 @@
+include README.md SECURITY.md requirements.txt requirements-tested.txt
+graft tests
+graft examples
+graft bin
+graft .github
+graft docs
+global-exclude __pycache__ *.py[cod] *.corrupt-*
