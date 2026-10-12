@@ -35,7 +35,7 @@ if __package__ in (None, ""):
     if _PARENT not in sys.path:
         sys.path.insert(0, _PARENT)
 
-from youtube_upload import auth, gui_app_files, gui_theme, paths  # noqa: E402
+from youtube_upload import auth, gui_app_files, gui_theme, lib, paths  # noqa: E402
 import youtube_upload.main as cli_main  # noqa: E402
 from youtube_upload import report as report_mod  # noqa: E402
 from youtube_upload.errors import UploadCancelled, UploadFailed, YoutubeUploadError  # noqa: E402
@@ -51,7 +51,7 @@ def append_crash_log(text):
         target = paths.app_home() / CRASH_LOG_NAME
         target.parent.mkdir(parents=True, exist_ok=True)
         with open(str(target), "a", encoding="utf-8") as handle:
-            handle.write("[{0}] {1}\n".format(datetime.now().isoformat(timespec="seconds"), text))
+            handle.write("[{0}] {1}\n".format(datetime.now().isoformat(timespec="seconds"), lib.redact(text)))
         return target
     except OSError:
         return None
@@ -429,8 +429,12 @@ class UploadGUI:
         for weighted in weighted_rows:
             frame.rowconfigure(weighted, weight=1)
 
-        # React to accounts dir changes (typed or programmatic) by loading settings
-        self.accounts_dir_var.trace_add("write", self._on_accounts_dir_change)
+        # Loading an accounts folder resets the whole form, so it must happen on a deliberate act
+        # (Enter, leaving the field, picking from the list, Browse) and not on every keystroke:
+        # typing "C:\\Users\\me\\channel" used to wipe the form and write settings into every
+        # folder the path passed through.
+        for sequence in ("<Return>", "<FocusOut>", "<<ComboboxSelected>>"):
+            self.accounts_dir_combo.bind(sequence, self._commit_accounts_dir)
         # React to theme changes
         self.theme_var.trace_add("write", self._on_theme_change)
         # Keep the sign-in status line current
@@ -815,7 +819,7 @@ class UploadGUI:
             return
         self._set_video_selection(files)
 
-    def _on_accounts_dir_change(self, *_):
+    def _commit_accounts_dir(self, *_):
         path = (self.accounts_dir_var.get() or "").strip()
         if not path:
             return
@@ -879,7 +883,7 @@ class UploadGUI:
         count = getattr(self, counter_attr) + 1
         setattr(self, counter_attr, count)
         widget.configure(state="normal")
-        widget.insert("end", "[{0:03d}] {1}\n".format(count, text))
+        widget.insert("end", "[{0:03d}] {1}\n".format(count, lib.redact(text)))
         lines = int(widget.index("end-1c").split(".")[0])
         if lines > MAX_LOG_LINES:
             widget.delete("1.0", "{0}.0".format(lines - MAX_LOG_LINES))
@@ -1016,8 +1020,14 @@ class UploadGUI:
         args = []
         if self.secrets_var.get().strip():
             args += ["--client-secrets", self.secrets_var.get().strip()]
+        several = [a for a in self.accounts_var.get().split(",") if a.strip()]
         if self.credentials_var.get().strip():
-            args += ["--credentials-file", self.credentials_var.get().strip()]
+            if len(several) > 1:
+                # one credentials file for every listed account would send all uploads to one channel
+                self._note_once("The credentials file is ignored because several accounts are listed; "
+                                "each account uses <accounts folder>/<label>.json.")
+            else:
+                args += ["--credentials-file", self.credentials_var.get().strip()]
         if self.account_var.get().strip():
             args += ["--account", self.account_var.get().strip()]
         if self.accounts_var.get().strip():
@@ -1055,6 +1065,8 @@ class UploadGUI:
             self.account_status_var.set("; ".join(parts))
         except YoutubeUploadError as exc:
             self.account_status_var.set(str(exc).split(". ")[0][:160])
+        except OSError as exc:      # unmounted drive, a file in the path, permission denied ...
+            self.account_status_var.set("Accounts folder not usable: {0}".format(exc.strerror or exc))
         except SystemExit:
             self.account_status_var.set("")
 
@@ -1184,7 +1196,10 @@ class UploadGUI:
             result = cli_main.main(
                 argv, progress_factory=self._progress_factory, cancel_check=self.cancel_event.is_set,
                 notify=self._log, log=self._log, output=None,
-                on_result=lambda r: self._post(self._apply_result, r))
+                on_result=lambda r: self._post(self._apply_result, r),
+                # A worker thread must never wait on input(): when the GUI is started from a
+                # terminal the default prompt blocked it for good and Cancel could not help.
+                confirm_create_playlist=lambda title: True)
             self._post(self._finished_ok, kind, result)
         except UploadFailed as exc:
             self._post(self._finished_failed, exc)

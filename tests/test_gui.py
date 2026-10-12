@@ -118,6 +118,7 @@ def world(tmp_path, monkeypatch):
 
 def select_account(app, world):
     app.accounts_dir_var.set(str(world.dir))
+    app._commit_accounts_dir()          # what pressing Enter / leaving the field does
     pump(app, lambda: app.account_var.get() == "work")
 
 
@@ -532,6 +533,7 @@ def test_account_status_explains_a_missing_client_secrets_file(gui, tmp_path):
     empty = tmp_path / "empty_account"
     empty.mkdir()
     gui.accounts_dir_var.set(str(empty))
+    gui._commit_accounts_dir()
     pump(gui, lambda: gui.account_var.get() == "empty_account")
     gui._refresh_account_status()
     assert "client_secrets.json not found" in gui.account_status_var.get()
@@ -558,6 +560,7 @@ def test_settings_round_trip_through_a_restart(root, tmp_path):
     folder.mkdir()
     first = gui_app.UploadGUI(root)
     first.accounts_dir_var.set(str(folder))
+    first._commit_accounts_dir()
     root.update()
     first.category_var.set("Music")
     first.privacy_var.set("unlisted")
@@ -690,3 +693,93 @@ def test_gui_module_exits_cleanly_with_a_message_when_there_is_no_display():
                             text=True, env=env, timeout=60, cwd=str(REPO))
     assert result.returncode == 1
     assert "could not be opened" in result.stderr and "Traceback" not in result.stderr
+
+
+# ------------------------------------------------------ findings from the independent review
+
+def test_typing_an_accounts_folder_does_not_wipe_the_form_or_litter_settings(gui, tmp_path):
+    """Regression: every keystroke that formed an existing folder reloaded (reset) the whole form
+    and wrote gui_settings.json into each folder along the path."""
+    target = tmp_path / "projects" / "channels" / "mychannel"
+    target.mkdir(parents=True)
+    gui.description_text.insert("1.0", "My carefully written description")
+    gui.playlist_var.set("My playlist")
+    gui.privacy_var.set("unlisted")
+    typed = ""
+    for ch in str(target):
+        typed += ch
+        gui.accounts_dir_var.set(typed)
+        gui.root.update()
+    assert "My carefully written description" in text_of(gui.description_text)
+    assert (gui.playlist_var.get(), gui.privacy_var.get()) == ("My playlist", "unlisted")
+    assert not list(tmp_path.rglob("gui_settings.json"))             # nothing written into the path's folders
+    gui._commit_accounts_dir()                                        # Enter: now it is deliberate
+    assert gui.accounts_dir_var.get() == str(target) and gui.account_var.get() == "mychannel"
+
+
+def test_leaving_the_field_or_picking_from_the_list_loads_the_folder(gui, tmp_path):
+    folder = tmp_path / "acc_x"
+    folder.mkdir()
+    gui.accounts_dir_var.set(str(folder))
+    gui.accounts_dir_combo.event_generate("<FocusOut>")
+    gui.root.update()
+    assert gui.account_var.get() == "acc_x"
+
+
+def test_window_starts_when_the_saved_accounts_folder_cannot_be_used(root, tmp_path):
+    """Regression: resolving the account called mkdir(); an unusable saved folder made the
+    constructor raise on every start."""
+    blocker = tmp_path / "a_file_not_a_folder"
+    blocker.write_text("x")
+    settings = Path.home() / ".youtube_upload_gui_settings.json"
+    settings.write_text(json.dumps({"accounts_dir": str(blocker / "accounts"),
+                                    "secrets_path": str(tmp_path / "client_secrets.json")}), encoding="utf-8")
+    app = gui_app.UploadGUI(root)                       # must not raise
+    root.update()
+    assert app.account_status_var.get()                  # says something useful instead of crashing
+
+
+def test_the_status_line_never_creates_directories(gui, tmp_path):
+    missing = tmp_path / "nowhere" / "accounts"
+    gui.accounts_dir_var.set(str(missing))
+    gui._refresh_account_status()
+    assert not (tmp_path / "nowhere").exists()
+
+
+def test_gui_started_from_a_terminal_never_blocks_on_a_playlist_prompt(gui, world, tmp_path, monkeypatch):
+    """Regression: the worker called input() when stdin was a terminal; Cancel could not unblock it."""
+    import builtins
+
+    class Tty(object):
+        def isatty(self):
+            return True
+
+        def readline(self):
+            raise AssertionError("the worker must never read from the terminal")
+    monkeypatch.setattr(sys, "stdin", Tty())
+    monkeypatch.setattr(builtins, "input", lambda *a: (_ for _ in ()).throw(AssertionError("input() called")))
+    video = write_mp4(tmp_path / "Holiday_clips" / "v.mp4")
+    start_upload(gui, world, [video])
+    pump(gui, lambda: idle(gui), timeout=20)
+    assert gui.dialogs.error == [] and gui.dialogs.info[-1][0] == "Upload complete"
+    assert [p["title"] for p in world.server.playlists.values()] == ["Holiday_clips"]
+
+
+def test_credentials_file_is_not_shared_between_several_listed_accounts(gui, world, tmp_path):
+    select_account(gui, world)
+    gui.credentials_var.set(str(world.dir / "work.json"))
+    gui.accounts_var.set("work, home")
+    args = gui._account_args()
+    assert "--credentials-file" not in args and ["--accounts", "work, home"] == args[args.index("--accounts"):args.index("--accounts") + 2]
+    assert "ignored because several accounts" in text_of(gui.log_text)
+    gui.accounts_var.set("")
+    assert "--credentials-file" in gui._account_args()
+
+
+def test_crash_log_and_panes_are_redacted(gui):
+    gui_app.append_crash_log("boom https://u/?upload_id=SECRETUPLOADID&uploadType=resumable")
+    text = (paths.app_home() / gui_app.CRASH_LOG_NAME).read_text(encoding="utf-8")
+    assert "SECRETUPLOADID" not in text and "[redacted]" in text
+    gui._log("retrying https://u/?upload_id=SECRETPANE&x=1")
+    gui._log_error("failed https://u/revoke?token=SECRETERRPANE")
+    assert "SECRETPANE" not in text_of(gui.log_text) and "SECRETERRPANE" not in text_of(gui.errors_text)
