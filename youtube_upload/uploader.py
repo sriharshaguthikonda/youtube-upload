@@ -27,6 +27,8 @@ from .ledger import Ledger
 from .progress import get_progress_info
 
 WATCH_VIDEO_URL = "https://www.youtube.com/watch?v={id}"
+# API error reasons meaning "the tags/keywords in the request are not acceptable".
+INVALID_KEYWORD_REASONS = {"invalidtags", "invalidvideokeywords"}
 
 
 def create_internet_shortcut(video_path, video_url):
@@ -226,20 +228,39 @@ class AccountUploader(object):
         result.abort_account = abort
         self.log("FAILED {0}: {1}".format(result.path, result.message))
 
-    def _upload(self, video_path, title, sha256, size, category_id, result):
-        o = self.options
-        body = self._body(title, build_tags(o, sha256), category_id)
+    def _upload_with_body(self, video_path, body, sha256, size):
         session = upload_video.UploadSession(
             self.sessions, upload_video.session_key(self.channel.id, sha256, size))
         progress = self.progress_factory(video_path) if self.progress_factory else get_progress_info()
         self.log("Start upload: {0}".format(video_path))
         try:
-            video_id = upload_video.upload(
-                self.youtube, video_path, body, chunksize=o.chunksize,
+            return upload_video.upload(
+                self.youtube, video_path, body, chunksize=self.options.chunksize,
                 progress_callback=progress.callback, retrier=self.retrier,
                 session=session, log=self.log)
         finally:
             progress.finish()
+
+    def _upload(self, video_path, title, sha256, size, category_id, result):
+        o = self.options
+        tags = build_tags(o, sha256)
+        body = self._body(title, tags, category_id)
+        try:
+            video_id = self._upload_with_body(video_path, body, sha256, size)
+        except googleapiclient.errors.HttpError as exc:
+            failure = retry.classify_exception(exc)
+            our_tag = channel_mod.hash_tag(sha256)
+            if (failure.reason or "").lower() not in INVALID_KEYWORD_REASONS or our_tag not in tags:
+                raise
+            # The duplicate-detection tag is this tool's own addition (69 characters). If the
+            # API refuses the keywords, upload without it once; the local record still
+            # prevents re-uploads from this computer.
+            result.warnings.append(
+                "YouTube rejected the duplicate-detection tag ({0}); uploading without it. The "
+                "local upload record still prevents duplicates from this computer.".format(failure.message))
+            self.log("Note: " + result.warnings[-1])
+            body = self._body(title, [t for t in tags if t != our_tag], category_id)
+            video_id = self._upload_with_body(video_path, body, sha256, size)
 
         # Record before anything else can fail so a re-run never uploads it again.
         try:
@@ -260,7 +281,8 @@ class AccountUploader(object):
                 result.warnings.append("Uploaded as {0} but could not be verified: {1}".format(
                     video_id, retry.classify_exception(exc).message))
             else:
-                if o.skip_if_exists == "hash":
+                if o.skip_if_exists == "hash" and not any("rejected the duplicate-detection tag" in w
+                                                          for w in result.warnings):
                     tags = (item.get("snippet") or {}).get("tags") or []
                     if channel_mod.hash_tag(sha256) not in tags:
                         result.warnings.append(

@@ -24,12 +24,24 @@ from youtube_upload import auth, gui_app, paths, report  # noqa: E402
 REPO = Path(__file__).resolve().parents[1]
 
 
+def new_tk_root():
+    """Create a Tk root, retrying: on the Windows CI runner one creation per run failed with
+    "Can't find a usable init.tcl" although the file exists and the other 40 succeeded."""
+    import gc
+    last = None
+    for _ in range(4):
+        try:
+            return tk.Tk()
+        except tk.TclError as exc:
+            last = exc
+            gc.collect()           # let a just-destroyed interpreter finish tearing down
+            time.sleep(0.3)
+    pytest.skip("no display / Tk unavailable: %s" % last)
+
+
 @pytest.fixture
 def root():
-    try:
-        window = tk.Tk()
-    except tk.TclError as exc:
-        pytest.skip("no display available: %s" % exc)
+    window = new_tk_root()
     window.withdraw()
     yield window
     try:
@@ -558,7 +570,7 @@ def test_settings_round_trip_through_a_restart(root, tmp_path):
     for child in root.winfo_children():
         child.destroy()
 
-    root2 = tk.Tk()
+    root2 = new_tk_root()
     root2.withdraw()
     try:
         second = gui_app.UploadGUI(root2)

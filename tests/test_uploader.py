@@ -498,3 +498,38 @@ def test_channel_without_a_youtube_channel_is_a_clear_error(state, clock, tmp_pa
     server._route = empty_channels
     with pytest.raises(AuthenticationError, match="no YouTube channel"):
         make_uploader(server, state, clock)
+
+
+# ------------------------------------------- robustness against the live API's tag rules
+
+@pytest.mark.parametrize("reason", ["invalidTags", "invalidVideoKeywords"])
+def test_if_youtube_rejects_the_hash_tag_the_upload_is_retried_without_it(server, state, clock, tmp_path, reason):
+    """The 69-character duplicate-detection tag could not be tried against live Google.
+    If the API rejects the keywords, upload anyway and say so; the ledger still guards duplicates."""
+    video = write_mp4(tmp_path / "v.mp4")
+    server.inject("POST", "/upload/youtube/v3/videos", status=400, reason=reason)
+    up = make_uploader(server, state, clock, "--skip-if-exists", "hash", "--tags", "keep, me")
+    result = up.upload_one(str(video), 0, 1)
+    assert result.status == report.UPLOADED and result.succeeded
+    assert server.sessions_started == 1                      # the rejected attempt never created a session
+    assert server.sessions["s1"]["meta"]["snippet"]["tags"] == ["keep", "me"]      # user tags intact
+    assert any("rejected the duplicate-detection tag" in w for w in result.warnings)
+    assert up.ledger.get(sha256_of(video))["video_id"] == result.video_id
+    again = make_uploader(server, state, clock, "--skip-if-exists", "hash").upload_one(str(video), 0, 1)
+    assert again.status == report.SKIPPED and again.video_id == result.video_id     # ledger alone suffices
+
+
+def test_invalid_tags_without_our_tag_is_a_plain_failure(server, state, clock, tmp_path):
+    video = write_mp4(tmp_path / "v.mp4")
+    server.inject("POST", "/upload/youtube/v3/videos", status=400, reason="invalidTags", times=5)
+    result = make_uploader(server, state, clock, "--tags", "bad<tag").upload_one(str(video), 0, 1)
+    assert result.status == report.FAILED and "invalidTags" in result.message
+    assert len(server.requests_to("POST", "/upload/youtube/v3/videos")) == 1      # no pointless retry
+
+
+def test_invalid_tags_twice_fails_after_one_retry(server, state, clock, tmp_path):
+    video = write_mp4(tmp_path / "v.mp4")
+    server.inject("POST", "/upload/youtube/v3/videos", status=400, reason="invalidTags", times=5)
+    result = make_uploader(server, state, clock, "--skip-if-exists", "hash").upload_one(str(video), 0, 1)
+    assert result.status == report.FAILED and "invalidTags" in result.message
+    assert len(server.requests_to("POST", "/upload/youtube/v3/videos")) == 2
