@@ -32,6 +32,7 @@ from . import categories
 from . import lib
 from . import paths
 from . import report as report_mod
+from . import titles
 from . import uploader
 from .errors import (AuthenticationError, InvalidCategory, InvalidVideoFormat, OptionsError,
                      RequestError, UploadCancelled, UploadFailed, YoutubeUploadError)
@@ -41,6 +42,7 @@ from .titles import default_title_from_video_path, sanitize_title  # noqa: F401 
 from .uploader import WATCH_VIDEO_URL, create_internet_shortcut  # noqa: F401 (re-exported)
 
 import googleapiclient.errors
+from google.auth.exceptions import RefreshError
 from . import retry
 
 EXIT_CODES = {
@@ -82,7 +84,7 @@ def _append_log_file(message):
         if logfile.exists() and logfile.stat().st_size > MAX_LOG_BYTES:
             logfile.replace(logfile.with_suffix(".log.1"))
         with open(str(logfile), "a", encoding="utf-8", newline="\n") as handle:
-            handle.write(str(message) + "\n")
+            handle.write(lib.redact(message) + "\n")
     except OSError:
         pass  # logging must never break an upload
 
@@ -223,6 +225,12 @@ def validate_options(options, args, need_videos=True, warn=debug):
     if options.privacy not in PRIVACY_VALUES:
         raise OptionsError("--privacy must be one of: {0} (got {1!r}).".format(
             ", ".join(PRIVACY_VALUES), options.privacy))
+    labels = account_labels(options)
+    if options.credentials_file and len(labels) > 1:
+        raise OptionsError(
+            "--credentials-file names ONE sign-in and cannot be combined with several accounts "
+            "(it would silently upload everything to the same channel). Use --accounts-dir with "
+            "one <label>.json per account instead.")
     options.embeddable = parse_bool(options.embeddable, "--embeddable")
     if options.publish_at:
         options.publish_at = normalize_datetime(options.publish_at, "--publish-at", warn, must_be_future=True)
@@ -241,7 +249,8 @@ def validate_options(options, args, need_videos=True, warn=debug):
         raise OptionsError("--auth-port must be between 0 and 65535.")
     if options.description_file is not None:
         try:
-            with open(options.description_file, encoding="utf-8") as handle:
+            # utf-8-sig: Windows Notepad writes a BOM, which would end up in the description.
+            with open(options.description_file, encoding="utf-8-sig") as handle:
                 options.description = handle.read()
         except (OSError, UnicodeDecodeError) as exc:
             raise OptionsError("Cannot read --description-file {0}: {1}".format(
@@ -250,7 +259,9 @@ def validate_options(options, args, need_videos=True, warn=debug):
         options.title_template.format(title="x", n=1, total=2)
     except (KeyError, IndexError, ValueError) as exc:
         raise OptionsError("Invalid --title-template {0!r}: {1}".format(options.title_template, exc)) from exc
-    return account_labels(options)
+    options.description = titles.clean_description(options.description, warn)
+    options.tags = titles.clean_tags(options.tags, warn)
+    return labels
 
 
 # ------------------------------------------------------------ account resolution
@@ -314,7 +325,8 @@ def resolve_account(options, label, notify=debug):
         shown = label or credentials.stem
     elif label or accounts_dir is not None:
         shown = label or "default"
-        accounts_dir.mkdir(parents=True, exist_ok=True)
+        # No mkdir here: resolving must not create directories (the GUI resolves on every
+        # keystroke); writing the credentials creates the folder when it is actually needed.
         credentials = accounts_dir / "{0}.json".format(shown)
     else:
         shown = "default"
@@ -398,6 +410,8 @@ def _setup_failure(exc):
         return str(exc), report_mod.EXIT_OPTIONS
     if isinstance(exc, AuthenticationError):
         return str(exc), report_mod.EXIT_AUTH
+    if isinstance(exc, RefreshError):
+        return auth.describe_refresh_error(exc) + " Sign in again.", report_mod.EXIT_AUTH
     if isinstance(exc, googleapiclient.errors.HttpError):
         failure = retry.classify_exception(exc)
         code = report_mod.EXIT_AUTH if failure.kind == retry.AUTH else report_mod.EXIT_REQUEST
@@ -406,7 +420,7 @@ def _setup_failure(exc):
 
 
 def run_main(parser, options, args, output=sys.stdout, progress_factory=None,
-             cancel_check=None, log=debug, notify=None, on_result=None):
+             cancel_check=None, log=debug, notify=None, on_result=None, confirm_create_playlist=None):
     """Upload ``args`` to every requested account. Returns a RunReport; never hides failures.
 
     ``on_result(VideoResult)`` is called as each file finishes (the GUI uses it to
@@ -434,7 +448,8 @@ def run_main(parser, options, args, output=sys.stdout, progress_factory=None,
             account = uploader.AccountUploader(
                 youtube, options, shown, paths.state_dir(), progress_factory=progress_factory,
                 cancel_check=cancel_check, log=log,
-                retry_policy=retry.RetryPolicy(max_retries=options.max_retries))
+                retry_policy=retry.RetryPolicy(max_retries=options.max_retries),
+                confirm_create_playlist=confirm_create_playlist)
         except UploadCancelled:
             run_report.cancelled = True
             _mark_remaining(run_report, labels[label_index:], args, report_mod.CANCELLED, "cancelled")
@@ -615,8 +630,13 @@ def _run_account_action(options, labels, action, notify):
 
 
 def main(arguments, progress_factory=None, cancel_check=None, notify=None, log=debug,
-         output=sys.stdout, on_result=None):
-    """Upload videos to Youtube. Returns the RunReport; raises on any failure."""
+         output=sys.stdout, on_result=None, confirm_create_playlist=None):
+    """Upload videos to Youtube. Returns the RunReport; raises on any failure.
+
+    ``confirm_create_playlist(title) -> bool`` decides whether a missing playlist is created;
+    the default asks on an interactive terminal (and creates silently when there is none).
+    The GUI passes its own, because a worker thread must never block on ``input()``.
+    """
     parser = build_parser()
     options, args = parser.parse_args(arguments)
 
@@ -655,7 +675,8 @@ def main(arguments, progress_factory=None, cancel_check=None, notify=None, log=d
         return None
 
     run_report = run_main(parser, options, args, output=output, progress_factory=progress_factory,
-                          cancel_check=cancel_check, log=log, notify=notify, on_result=on_result)
+                          cancel_check=cancel_check, log=log, notify=notify, on_result=on_result,
+                          confirm_create_playlist=confirm_create_playlist)
     if run_report.cancelled:
         raise UploadCancelled("Cancelled by user")
     if not run_report.ok:

@@ -22,12 +22,25 @@ def get_playlist(youtube, title, retrier=None):
 
 
 def create_playlist(youtube, title, privacy, retrier=None):
-    """Create a playlist by title and return its ID."""
+    """Create a playlist by title and return its ID.
+
+    Creating is not idempotent: if an attempt failed in a way that leaves it unknown whether the
+    server processed it (lost response, 5xx), look for the playlist before POSTing again.
+    """
     debug("Creating playlist: {0}".format(title))
-    response = _call(retrier, youtube.playlists().insert(part="snippet,status", body={
-        "snippet": {"title": title},
-        "status": {"privacyStatus": privacy},
-    }).execute, "playlist creation")
+    attempts = {"n": 0}
+
+    def insert():
+        if attempts["n"]:
+            existing = get_playlist(youtube, title)       # own retrier: counters stay separate
+            if existing:
+                return {"id": existing}
+        attempts["n"] += 1
+        return youtube.playlists().insert(part="snippet,status", body={
+            "snippet": {"title": title},
+            "status": {"privacyStatus": privacy},
+        }).execute()
+    response = _call(retrier, insert, "playlist creation")
     return response.get("id")
 
 
@@ -50,12 +63,19 @@ def add_video_to_existing_playlist(youtube, playlist_id, video_id, retrier=None)
         debug("Video already in playlist: {0}".format(video_id))
         return None
     debug("Adding video to playlist: {0}".format(playlist_id))
-    return _call(retrier, youtube.playlistItems().insert(part="snippet", body={
-        "snippet": {
-            "playlistId": playlist_id,
-            "resourceId": {"kind": "youtube#video", "videoId": video_id},
-        }
-    }).execute, "playlist insert")
+    attempts = {"n": 0}
+
+    def insert():
+        if attempts["n"] and video_in_playlist(youtube, playlist_id, video_id):
+            return None                                   # an earlier attempt did go through
+        attempts["n"] += 1
+        return youtube.playlistItems().insert(part="snippet", body={
+            "snippet": {
+                "playlistId": playlist_id,
+                "resourceId": {"kind": "youtube#video", "videoId": video_id},
+            }
+        }).execute()
+    return _call(retrier, insert, "playlist insert")
 
 
 def confirm_create_on_terminal(title):

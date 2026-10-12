@@ -29,11 +29,12 @@ import googleapiclient.errors
 import googleapiclient.http
 
 from . import lib, paths, retry
-from .errors import RequestError
+from .errors import RequestError, UploadCancelled
 
 VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 # Google keeps a resumable session for about a week; stay well inside that.
 SESSION_MAX_AGE = 5 * 24 * 3600
+MAX_STALLED_CHUNKS = 50   # consecutive "308" replies that do not advance the offset
 MIN_CHUNK = 256 * 1024
 
 
@@ -84,8 +85,19 @@ class SessionStore(object):
         return data["uri"]
 
     def save(self, key, uri, size, digest):
-        paths.write_private_json(self._file(key), {
-            "uri": uri, "size": size, "digest": digest, "created": self._clock()})
+        """Persist the session. Returns False (after a warning) instead of raising.
+
+        Resumability is a convenience; a full disk or an antivirus lock on the state folder
+        must never fail an upload (nor discard one that has just completed).
+        """
+        try:
+            paths.write_private_json(self._file(key), {
+                "uri": uri, "size": size, "digest": digest, "created": self._clock()})
+            return True
+        except OSError as exc:
+            self._warn("Could not save the resumable-upload record ({0}); this upload cannot be "
+                       "resumed if interrupted.".format(exc))
+            return False
 
     def discard(self, key):
         try:
@@ -107,10 +119,32 @@ class UploadSession(object):
         return self.store.load(self.key, size, body_digest(body))
 
     def save(self, uri, size, body):
-        self.store.save(self.key, uri, size, body_digest(body))
+        return self.store.save(self.key, uri, size, body_digest(body))
 
     def discard(self):
         self.store.discard(self.key)
+
+
+class _SessionRecordingHttp(object):
+    """Wraps ``request.http`` to save the session URI the moment Google issues it.
+
+    ``next_chunk()`` creates the session and sends the first chunk in one call, so a record
+    written only after it returns leaves a window (the whole file of a small video!) in which a
+    crash loses the session although the server may already hold every byte.
+    """
+
+    def __init__(self, inner, on_session):
+        self._inner = inner
+        self._on_session = on_session
+
+    def request(self, uri, method="GET", body=None, headers=None, *args, **kwargs):
+        resp, content = self._inner.request(uri, method, body=body, headers=headers, *args, **kwargs)
+        if method == "POST" and getattr(resp, "status", None) == 200 and resp.get("location"):
+            self._on_session(resp["location"])
+        return resp, content
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
 
 
 def _drop_none(value):
@@ -126,7 +160,12 @@ def _query_status(request, uri, size, retrier):
     headers = {"Content-Range": "bytes */{0}".format(size), "content-length": "0"}
 
     def ask():
-        return request.http.request(uri, "PUT", headers=headers)
+        resp, content = request.http.request(uri, "PUT", headers=headers)
+        if resp.status not in (200, 201, 308, 404, 410):
+            # httplib2 returns 5xx/429 as a response instead of raising. Raise here so the
+            # retrier sees it: a transient error must not make us discard a good session.
+            raise googleapiclient.errors.HttpError(resp, content, uri=uri)
+        return resp, content
 
     resp, content = retrier.call(ask, what="resumable status query")
     status = resp.status
@@ -138,9 +177,7 @@ def _query_status(request, uri, size, retrier):
             return "partial", (int(rng.split("-")[1]) + 1 if rng else 0)
         except (ValueError, IndexError):
             return "partial", 0
-    if status in (404, 410):
-        return "gone", None
-    raise googleapiclient.errors.HttpError(resp, content, uri=uri)
+    return "gone", None   # 404 / 410: the session no longer exists
 
 
 def upload(resource, path, body, chunksize=8 * 1024 * 1024, progress_callback=None,
@@ -160,11 +197,18 @@ def upload(resource, path, body, chunksize=8 * 1024 * 1024, progress_callback=No
         str(path), chunksize=chunksize, resumable=True, mimetype="application/octet-stream")
     size = media.size()
 
+    persisted = {"uri": None}
+
+    def remember(uri):
+        if session and session.save(uri, size, body):
+            persisted["uri"] = uri
+
     def new_request():
-        return resource.videos().insert(part=part, body=body, media_body=media)
+        fresh = resource.videos().insert(part=part, body=body, media_body=media)
+        fresh.http = _SessionRecordingHttp(fresh.http, remember)
+        return fresh
 
     request = new_request()
-    persisted_uri = None
 
     saved_uri = session.load(size, body) if session else None
     if saved_uri:
@@ -183,7 +227,7 @@ def upload(resource, path, body, chunksize=8 * 1024 * 1024, progress_callback=No
         if kind == "partial":
             request.resumable_uri = saved_uri
             request.resumable_progress = value
-            persisted_uri = saved_uri
+            persisted["uri"] = saved_uri
             log("Resuming the interrupted upload at {0:.1f}%.".format(100.0 * value / size if size else 100))
             if progress_callback:
                 progress_callback(size, value)
@@ -192,6 +236,8 @@ def upload(resource, path, body, chunksize=8 * 1024 * 1024, progress_callback=No
             log("The saved upload session is no longer valid; starting a fresh upload.")
 
     restarts = 0
+    stalled = 0
+    last_progress = request.resumable_progress
     while True:
         try:
             status, response = retrier.call(request.next_chunk, what="upload chunk")
@@ -203,15 +249,23 @@ def upload(resource, path, body, chunksize=8 * 1024 * 1024, progress_callback=No
                 log("Upload session expired ({0}); restarting the upload.".format(failure.message))
                 if session:
                     session.discard()
-                    persisted_uri = None
+                    persisted["uri"] = None
                 request = new_request()
+                stalled, last_progress = 0, request.resumable_progress
                 continue
             raise
-        if session and request.resumable_uri and request.resumable_uri != persisted_uri:
-            session.save(request.resumable_uri, size, body)
-            persisted_uri = request.resumable_uri
         if response is not None:
-            break
+            break                      # finished: nothing below may turn this into a failure
+        if session and request.resumable_uri and request.resumable_uri != persisted["uri"]:
+            remember(request.resumable_uri)
+        if request.resumable_progress > last_progress:
+            stalled, last_progress = 0, request.resumable_progress
+        else:
+            stalled += 1
+            if stalled >= MAX_STALLED_CHUNKS:
+                raise RequestError(
+                    "YouTube is not making progress on the upload ({0} consecutive replies without "
+                    "advancing past byte {1}).".format(stalled, last_progress))
         if status is not None and progress_callback:
             progress_callback(status.total_size, status.resumable_progress)
 
@@ -219,7 +273,12 @@ def upload(resource, path, body, chunksize=8 * 1024 * 1024, progress_callback=No
     if session:
         session.discard()
     if progress_callback:
-        progress_callback(size, size)
+        try:
+            progress_callback(size, size)
+        except UploadCancelled:
+            # Cancel arrived while the last chunk was on the wire. The video exists now; the
+            # caller records it and honours the cancel before the NEXT file.
+            log("Cancel requested, but this upload had already completed.")
     return video_id
 
 

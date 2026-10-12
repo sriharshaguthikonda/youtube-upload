@@ -12,14 +12,16 @@ thumbnail, playlist). Failures are classified, never swallowed:
   otherwise uploaded video, so the exit code is not 0 but the video is not
   uploaded a second time on re-run.
 """
+import contextlib
 import time
 import traceback
 import webbrowser
 from pathlib import Path
 
 import googleapiclient.errors
+from google.auth.exceptions import RefreshError
 
-from . import (channel as channel_mod, content_validation, formats, lib, playlists,
+from . import (auth, channel as channel_mod, content_validation, formats, lib, playlists,
                report, retry, titles, upload_video)
 from .errors import (AuthenticationError, InvalidCategory, InvalidVideoFormat, OptionsError,
                      QuotaExceeded, RequestError, RetryExhausted, UploadCancelled)
@@ -58,6 +60,13 @@ def resolve_title(options, video_path, index, total, warn):
         base = titles.explicit_title(options.title, warn)
         if total > 1:
             try:
+                overhead = len(options.title_template.format(title="", n=index + 1, total=total))
+                room = max(1, titles.MAX_TITLE_LENGTH - overhead)
+                if len(base) > room:
+                    # Shorten the title itself, not the end of the combined string, so the
+                    # [n/total] part survives and the titles stay distinct.
+                    warn("Title shortened to {0} characters to leave room for the numbering.".format(room))
+                    base = base[:room].rstrip()
                 combined = options.title_template.format(title=base, n=index + 1, total=total)
             except (KeyError, IndexError, ValueError) as exc:
                 raise OptionsError("Invalid --title-template {0!r}: {1}".format(
@@ -103,6 +112,21 @@ class AccountUploader(object):
 
     # ------------------------------------------------------------------ helpers
 
+    @contextlib.contextmanager
+    def _uncancellable(self):
+        """Run steps that must complete once a video exists (verify, ledger, follow-ups).
+
+        A Cancel pressed while the last chunk was in flight used to surface as
+        ``UploadCancelled`` here, discarding the result of a video that had been created.
+        The cancel is still honoured: the next file's first step raises it.
+        """
+        saved = self.retrier.cancel_check
+        self.retrier.cancel_check = None
+        try:
+            yield
+        finally:
+            self.retrier.cancel_check = saved
+
     def _wait_for_upload_slot(self, sha256, result):
         """Hold the in-flight lock for (this channel, this file's content).
 
@@ -126,6 +150,11 @@ class AccountUploader(object):
                 raise RequestError("Gave up waiting for another upload of this file to finish.")
             self._sleep(0.25)
             waited += 0.25
+        if lock.degraded:
+            note = ("This folder's file system does not support file locking; two simultaneous "
+                    "uploads of the same file cannot be prevented from here.")
+            result.warnings.append(note)
+            self.log("Note: " + note)
         return lock
 
     def _sha256(self, path):
@@ -139,14 +168,17 @@ class AccountUploader(object):
         """True/False if YouTube says; ``None`` if it could not be checked."""
         try:
             response = self.retrier.call(
-                lambda: self.youtube.videos().list(part="snippet", id=video_id).execute(),
+                lambda: self.youtube.videos().list(part="snippet,status", id=video_id).execute(),
                 what="existing-video check")
         except (RetryExhausted, RequestError, googleapiclient.errors.HttpError) as exc:
             self.log("Could not confirm video {0} still exists ({1}); trusting the local record.".format(
                 video_id, exc))
             return None
         items = response.get("items") or []
-        return bool(items) and (items[0].get("snippet") or {}).get("channelId") == self.channel.id
+        if not items or (items[0].get("snippet") or {}).get("channelId") != self.channel.id:
+            return False
+        # A video YouTube failed to process or rejected is not "already uploaded": retry it.
+        return (items[0].get("status") or {}).get("uploadStatus") not in channel_mod.BAD_UPLOAD_STATUSES
 
     def _find_existing(self, sha256, title, result):
         mode = self.options.skip_if_exists
@@ -225,13 +257,23 @@ class AccountUploader(object):
                 lock.release()
             result.video_id = video_id
             result.url = WATCH_VIDEO_URL.format(id=video_id)
-            self._follow_up(video_path, video_id, result)
+            with self._uncancellable():
+                self._follow_up(video_path, video_id, result)
         except UploadCancelled:
+            if result.video_id:        # cannot happen any more; never lose a created video's id
+                result.status = result.status or report.UPLOADED
+                return result
             raise
         except (InvalidVideoFormat, OptionsError, InvalidCategory) as exc:
             self._fail(result, exc, report.EXIT_OPTIONS)
         except AuthenticationError as exc:
             self._fail(result, exc, report.EXIT_AUTH, abort=True)
+        except RefreshError as exc:
+            # The token was refused mid-run (revoked, expired, client rotated): an auth failure,
+            # not an "unexpected error". Stop this account; the user must sign in again.
+            self._fail(result, AuthenticationError(
+                auth.describe_refresh_error(exc) + " Sign in again and re-run; files already "
+                "uploaded are remembered."), report.EXIT_AUTH, abort=True)
         except (QuotaExceeded, RetryExhausted) as exc:
             self._fail(result, exc, report.EXIT_REQUEST, abort=True)
         except RequestError as exc:
@@ -304,7 +346,11 @@ class AccountUploader(object):
 
         if getattr(o, "verify", True):
             try:
-                item = upload_video.verify_video(self.youtube, video_id, self.retrier)
+                with self._uncancellable():
+                    item = upload_video.verify_video(self.youtube, video_id, self.retrier)
+            except RefreshError as exc:
+                result.warnings.append("Uploaded as {0} but could not be verified: {1}".format(
+                    video_id, auth.describe_refresh_error(exc)))
             except RequestError as exc:
                 if "reports video" in str(exc):  # YouTube rejected / failed it
                     self.ledger.forget(sha256)

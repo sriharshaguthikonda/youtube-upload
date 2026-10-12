@@ -91,14 +91,15 @@ class FakeYouTubeServer(object):
     def search_calls(self):
         return len(self.requests_to("GET", "/search"))
 
-    def add_existing_video(self, title, tags=None, description="", channel_id=None, video_id=None):
+    def add_existing_video(self, title, tags=None, description="", channel_id=None, video_id=None,
+                           upload_status="processed"):
         self._n += 1
         video_id = video_id or "oldVid%05d" % self._n
         self.videos[video_id] = {
             "kind": "youtube#video", "id": video_id,
             "snippet": {"title": title, "description": description, "tags": tags or [],
                         "channelId": channel_id or self.channel_id},
-            "status": {"uploadStatus": "processed", "privacyStatus": "public"},
+            "status": {"uploadStatus": upload_status, "privacyStatus": "public"},
         }
         self.upload_order.insert(0, video_id)
         return video_id

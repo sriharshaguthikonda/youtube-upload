@@ -14,6 +14,8 @@ from .errors import AuthenticationError
 Channel = namedtuple("Channel", "id title uploads_playlist")
 
 HASH_PREFIX = "hash:"
+# uploadStatus values meaning YouTube did not keep the video: it must not count as a duplicate.
+BAD_UPLOAD_STATUSES = {"failed", "rejected", "deleted"}
 _HASH_RE = re.compile(r"hash:([0-9a-f]{64})")
 
 
@@ -53,7 +55,7 @@ class RemoteIndex(object):
         self.truncated = False
 
     def _scan(self):
-        by_title, by_hash, ids = {}, {}, []
+        by_title, by_hash, ids, bad_ids = {}, {}, [], set()
         token = None
         while True:
             def page(token=token):
@@ -84,12 +86,18 @@ class RemoteIndex(object):
             batch = ids[start:start + 50]
             response = self._retrier.call(
                 lambda batch=batch: self._youtube.videos().list(
-                    part="snippet", id=",".join(batch)).execute(),  # maxResults is not allowed with id
+                    part="snippet,status", id=",".join(batch)).execute(),  # maxResults is not allowed with id
                 what="video tag listing")
             for item in response.get("items") or []:
+                if (item.get("status") or {}).get("uploadStatus") in BAD_UPLOAD_STATUSES:
+                    bad_ids.add(item["id"])
+                    continue
                 for tag in (item.get("snippet") or {}).get("tags") or []:
                     if tag.startswith(HASH_PREFIX) and len(tag) == len(HASH_PREFIX) + 64:
                         by_hash.setdefault(tag[len(HASH_PREFIX):], item["id"])
+        if bad_ids:   # videos YouTube failed/rejected are not duplicates
+            by_title = {t: v for t, v in by_title.items() if v not in bad_ids}
+            by_hash = {h: v for h, v in by_hash.items() if v not in bad_ids}
         if self.truncated:
             self._log("Channel has more than {0} videos; only the newest {0} were checked "
                       "for duplicates.".format(self._max))

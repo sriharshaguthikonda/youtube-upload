@@ -7,6 +7,7 @@ id*, so two accounts never share state and re-authorising a label as a
 different Google user cannot cause a false "already uploaded".
 """
 import contextlib
+import errno
 import os
 import re
 import threading
@@ -40,6 +41,12 @@ def _file_lock(lock_path, timeout=10.0, sleep=time.sleep, clock=time.time):
         lock.release()
 
 
+# errno values meaning "somebody else holds it" (POSIX flock / Windows msvcrt.locking).
+_BUSY_ERRNOS = {errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK, errno.EDEADLK}
+if hasattr(errno, "EDEADLOCK"):
+    _BUSY_ERRNOS.add(errno.EDEADLOCK)
+
+
 class ProcessLock(object):
     """Exclusive lock on a file, held by this process and dropped by the OS when it dies.
 
@@ -51,9 +58,15 @@ class ProcessLock(object):
     def __init__(self, path):
         self.path = Path(path)
         self._handle = None
+        self.degraded = False  # True: the file system cannot lock (some NFS/SMB mounts); not enforced
 
     def acquire(self):
-        """Try to take the lock without waiting. ``True`` if now held."""
+        """Try to take the lock without waiting. ``True`` if now held.
+
+        Only genuine contention returns ``False``. If the file system does not support locking
+        at all (ENOLCK/ENOTSUP...), waiting would never end, so the lock degrades to a no-op
+        and ``degraded`` says so.
+        """
         if self._handle is not None:
             return True
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -66,9 +79,11 @@ class ProcessLock(object):
             else:
                 import fcntl
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            handle.close()
-            return False
+        except OSError as exc:
+            if exc.errno in _BUSY_ERRNOS:
+                handle.close()
+                return False
+            self.degraded = True   # cannot lock here: carry on unlocked rather than wait forever
         self._handle = handle
         return True
 
