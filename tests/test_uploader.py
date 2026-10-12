@@ -115,10 +115,22 @@ def test_explicit_title_with_several_videos_uses_template_but_derived_titles_do_
 
 
 def test_title_rewrites_are_reported_as_warnings(server, state, clock, tmp_path):
-    video = write_mp4(tmp_path / "bad<name>.mp4")
-    result = make_uploader(server, state, clock).upload_one(str(video), 0, 1)
+    # '<' cannot be in a Windows file name, so this reaches us through --title.
+    video = write_mp4(tmp_path / "plain.mp4")
+    result = make_uploader(server, state, clock, "--title", "bad<name>").upload_one(str(video), 0, 1)
     assert server.sessions["s1"]["meta"]["snippet"]["title"] == "bad name"
     assert any("characters were removed" in w for w in result.warnings)
+
+
+def test_untitled_fallback_and_truncation_from_file_names_are_reported(server, state, clock, tmp_path):
+    long_name = write_mp4(tmp_path / (("long " * 30) + ".mp4"))
+    odd = write_mp4(tmp_path / "___.mp4", seed="2")
+    up = make_uploader(server, state, clock)
+    r1 = up.upload_one(str(long_name), 0, 2)
+    r2 = up.upload_one(str(odd), 1, 2)
+    assert any("truncated" in w for w in r1.warnings)
+    assert any("Untitled" in w for w in r2.warnings)
+    assert server.videos[r2.video_id]["snippet"]["title"] == "Untitled"
 
 
 # ------------------------------------------------------------------ duplicates

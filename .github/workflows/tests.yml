@@ -34,7 +34,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb python3-tk || true
+          sudo apt-get install -y -qq xvfb python3-tk ffmpeg || true
           xvfb-run -a python -m pytest
       - name: Tests (Windows)
         if: runner.os == 'Windows'

@@ -52,7 +52,10 @@ SECRET_SHAPES = [
     re.compile(r"1//0[A-Za-z0-9_-]{30,}"),              # refresh token
     re.compile(r"AIza[0-9A-Za-z_-]{35}"),               # API key
     re.compile(r"-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----"),
-    re.compile(r'"(refresh_token|client_secret|access_token)"\s*:\s*"(?!(REPLACE|YOUR|<|\s*"))[^"]{8,}"', re.IGNORECASE),
+    # JSON credential fields with a real-looking value. Placeholders ("REPLACE...", "<...>") and the
+    # obviously fake values used by the tests (they all start with "fake") are not secrets.
+    re.compile(r'"(refresh_token|client_secret|access_token)"\s*:\s*"(?!(REPLACE|YOUR|<|fake|\s*"))[^"]{8,}"',
+               re.IGNORECASE),
 ]
 
 

@@ -363,6 +363,20 @@ class _NullWriter(object):
         return None
 
 
+def _notifying_add(run_report, on_result, log):
+    plain_add = run_report.add
+
+    def add(result):
+        plain_add(result)
+        if on_result is not None:
+            try:
+                on_result(result)
+            except Exception as exc:  # a broken listener must not stop an upload run
+                log("Internal error in result listener: {0}".format(exc))
+        return result
+    return add
+
+
 def _fail_account(report, label, videos, exc_message, exit_code):
     report.account_failed(label, exc_message, exit_code)
     for path in videos:
@@ -387,8 +401,12 @@ def _setup_failure(exc):
 
 
 def run_main(parser, options, args, output=sys.stdout, progress_factory=None,
-             cancel_check=None, log=debug, notify=None):
-    """Upload ``args`` to every requested account. Returns a RunReport; never hides failures."""
+             cancel_check=None, log=debug, notify=None, on_result=None):
+    """Upload ``args`` to every requested account. Returns a RunReport; never hides failures.
+
+    ``on_result(VideoResult)`` is called as each file finishes (the GUI uses it to
+    update its per-file status); an exception inside it is logged, never fatal.
+    """
     if output is None:  # pythonw (windowless GUI launch) has no stdout
         output = _NullWriter()
     notify = notify or log
@@ -397,6 +415,7 @@ def run_main(parser, options, args, output=sys.stdout, progress_factory=None,
     progress_factory = progress_factory or PROGRESS_FACTORY
 
     run_report = report_mod.RunReport()
+    run_report.add = _notifying_add(run_report, on_result, log)
     _warn_duplicate_titles(options, args, log)
 
     for label_index, label in enumerate(labels):
@@ -588,7 +607,7 @@ def _run_account_action(options, labels, action, notify):
 
 
 def main(arguments, progress_factory=None, cancel_check=None, notify=None, log=debug,
-         output=sys.stdout):
+         output=sys.stdout, on_result=None):
     """Upload videos to Youtube. Returns the RunReport; raises on any failure."""
     parser = build_parser()
     options, args = parser.parse_args(arguments)
@@ -628,7 +647,7 @@ def main(arguments, progress_factory=None, cancel_check=None, notify=None, log=d
         return None
 
     run_report = run_main(parser, options, args, output=output, progress_factory=progress_factory,
-                          cancel_check=cancel_check, log=log, notify=notify)
+                          cancel_check=cancel_check, log=log, notify=notify, on_result=on_result)
     if run_report.cancelled:
         raise UploadCancelled("Cancelled by user")
     if not run_report.ok:
