@@ -23,12 +23,13 @@ from . import (channel as channel_mod, content_validation, formats, lib, playlis
                report, retry, titles, upload_video)
 from .errors import (AuthenticationError, InvalidCategory, InvalidVideoFormat, OptionsError,
                      QuotaExceeded, RequestError, RetryExhausted, UploadCancelled)
-from .ledger import Ledger
+from .ledger import Ledger, ProcessLock, prune_old_locks, upload_lock_name
 from .progress import get_progress_info
 
 WATCH_VIDEO_URL = "https://www.youtube.com/watch?v={id}"
 # API error reasons meaning "the tags/keywords in the request are not acceptable".
 INVALID_KEYWORD_REASONS = {"invalidtags", "invalidvideokeywords"}
+UPLOAD_SLOT_MAX_WAIT = 6 * 3600   # seconds to wait for another upload of the same file
 
 
 def create_internet_shortcut(video_path, video_url):
@@ -92,12 +93,40 @@ class AccountUploader(object):
         state_dir = Path(state_dir)
         self.ledger = Ledger(state_dir / "ledger", self.channel.id, warn=log)
         self.sessions = upload_video.SessionStore(state_dir / "sessions", warn=log)
+        self._locks_dir = state_dir / "locks"
+        self._sleep = sleep
+        prune_old_locks(self._locks_dir)
         self.remote = channel_mod.RemoteIndex(youtube, self.channel, self.retrier, log=log)
         self._playlist_cache = {}
         self._confirm_create = confirm_create_playlist or playlists.confirm_create_on_terminal
         self._hashes = {}
 
     # ------------------------------------------------------------------ helpers
+
+    def _wait_for_upload_slot(self, sha256, result):
+        """Hold the in-flight lock for (this channel, this file's content).
+
+        Two windows (or the GUI and a CLI run) uploading the same file at once would both
+        pass the duplicate check and create two videos, or fight over one resumable session.
+        The second one waits here, then sees the first one's result (a skip with
+        ``--skip-if-exists hash``). The lock is released by the OS if the holder dies.
+        """
+        lock = ProcessLock(self._locks_dir / upload_lock_name(self.channel.id, sha256))
+        announced = False
+        waited = 0.0
+        while not lock.acquire():
+            if not announced:
+                announced = True
+                note = "This file is already being uploaded by another window or process; waiting for it."
+                result.warnings.append(note)
+                self.log("Note: " + note)
+            if self.cancel_check and self.cancel_check():
+                raise UploadCancelled("Cancelled by user")
+            if waited >= UPLOAD_SLOT_MAX_WAIT:
+                raise RequestError("Gave up waiting for another upload of this file to finish.")
+            self._sleep(0.25)
+            waited += 0.25
+        return lock
 
     def _sha256(self, path):
         stat = Path(path).stat()
@@ -182,14 +211,18 @@ class AccountUploader(object):
             sha256 = self._sha256(video_path)
             size = Path(video_path).stat().st_size
 
-            video_id = self._find_existing(sha256, title, result)
-            if video_id:
-                result.status = report.SKIPPED
-                result.message = "already on the channel"
-                self.log("Skipping upload; video already exists: {0}".format(video_id))
-            else:
-                video_id = self._upload(video_path, title, sha256, size, category_id, result)
-                result.status = report.UPLOADED
+            lock = self._wait_for_upload_slot(sha256, result)
+            try:
+                video_id = self._find_existing(sha256, title, result)
+                if video_id:
+                    result.status = report.SKIPPED
+                    result.message = "already on the channel"
+                    self.log("Skipping upload; video already exists: {0}".format(video_id))
+                else:
+                    video_id = self._upload(video_path, title, sha256, size, category_id, result)
+                    result.status = report.UPLOADED
+            finally:
+                lock.release()
             result.video_id = video_id
             result.url = WATCH_VIDEO_URL.format(id=video_id)
             self._follow_up(video_path, video_id, result)

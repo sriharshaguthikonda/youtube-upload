@@ -533,3 +533,105 @@ def test_invalid_tags_twice_fails_after_one_retry(server, state, clock, tmp_path
     result = make_uploader(server, state, clock, "--skip-if-exists", "hash").upload_one(str(video), 0, 1)
     assert result.status == report.FAILED and "invalidTags" in result.message
     assert len(server.requests_to("POST", "/upload/youtube/v3/videos")) == 2
+
+
+# --------------------------------------------------------------- output paths / unicode
+
+def test_unicode_and_spaces_in_paths_work_end_to_end(server, state, clock, tmp_path):
+    folder = tmp_path / "Vidéos été" / "日本語 folder"
+    video = write_mp4(folder / "Café_résumé 2026-05.mp4")
+    up = make_uploader(server, state, clock, "--skip-if-exists", "hash", "--playlist", "Été 🎬")
+    result = up.upload_one(str(video), 0, 1)
+    assert result.succeeded and result.status == report.UPLOADED
+    assert server.videos[result.video_id]["snippet"]["title"] == "Café résumé 2026-05"
+    shortcut = folder / "Café_résumé 2026-05.mp4.url"
+    assert shortcut.read_bytes().decode("utf-8").splitlines() == [
+        "[InternetShortcut]", "URL=https://www.youtube.com/watch?v=" + result.video_id]
+    assert shortcut.read_bytes().count(b"\r\n") == 2            # Windows line endings
+    assert [p.name for p in folder.iterdir() if p.suffix == ".m3u"] == []
+    ((pid, playlist),) = server.playlists.items()
+    assert playlist["title"] == "Été 🎬" and playlist["items"] == [result.video_id]
+    again = make_uploader(server, state, clock, "--skip-if-exists", "hash").upload_one(str(video), 0, 1)
+    assert again.status == report.SKIPPED                           # ledger works with such paths too
+
+
+def test_report_lines_survive_a_cp1252_console(tmp_path, monkeypatch, capsysbinary):
+    """A cp1252 console cannot print every title/path; the run must not crash because of it."""
+    import io
+    import sys
+    from youtube_upload import lib
+    broken = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", errors="strict")
+    monkeypatch.setattr(sys, "stderr", broken)
+    lib.debug("Uploaded: 日本語 🎬 /tmp/Café.mp4")
+    broken.flush()
+    assert b"Caf" in broken.buffer.getvalue()
+
+
+# ------------------------------------------------------------- the same file, concurrently
+
+def _run_two_uploaders(server, state, tmp_path, video, *argv, delay=0.02):
+    """Two uploaders (think: two windows, or GUI + CLI) start on the same file at the same time."""
+    import threading
+    import time
+    from tests.conftest import FakeClock
+    original = server._put
+
+    def slow(path, body, headers):
+        time.sleep(delay)
+        return original(path, body, headers)
+    server._put = slow
+    results = {}
+
+    def run(name):
+        clock = FakeClock()
+        up = uploader.AccountUploader(server.client(), make_options(*argv), "work", state,
+                                      log=lambda m: None, sleep=clock.sleep, monotonic=clock.monotonic)
+        results[name] = up.upload_one(str(video), 0, 1)
+    threads = [threading.Thread(target=run, args=(n,)) for n in ("A", "B")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(60)
+    return results
+
+
+def test_concurrent_uploads_of_the_same_file_do_not_duplicate_it(server, state, tmp_path):
+    """Regression: both runs saw 'not uploaded yet' and both uploaded -> two videos."""
+    video = write_mp4(tmp_path / "v.mp4", size=6 * CHUNK + 5)
+    results = _run_two_uploaders(server, state, tmp_path, video, "--skip-if-exists", "hash")
+    assert sorted(r.status for r in results.values()) == [report.SKIPPED, report.UPLOADED]
+    assert len(server.videos) == 1 and server.sessions_started == 1
+    assert {r.video_id for r in results.values()} == set(server.videos)
+    assert server.uploaded_sha256[next(iter(server.videos))] == sha256_of(video)
+
+
+def test_concurrent_uploads_without_skip_option_run_one_after_the_other(server, state, tmp_path):
+    """No skip option means 'upload it again' is allowed, but never two writers on one session."""
+    video = write_mp4(tmp_path / "v.mp4", size=4 * CHUNK + 5)
+    results = _run_two_uploaders(server, state, tmp_path, video)
+    assert [r.status for r in results.values()] == [report.UPLOADED, report.UPLOADED]
+    assert len(server.videos) == 2 and server.sessions_started == 2
+    for vid in server.videos:
+        assert server.uploaded_sha256[vid] == sha256_of(video)             # neither upload was corrupted
+
+
+def test_a_waiting_upload_can_be_cancelled(server, state, clock, tmp_path):
+    from youtube_upload import ledger
+    from youtube_upload.errors import UploadCancelled
+    video = write_mp4(tmp_path / "v.mp4")
+    up = make_uploader(server, state, clock, "--skip-if-exists", "hash")
+    key = ledger.upload_lock_name(up.channel.id, sha256_of(video))
+    holder = ledger.ProcessLock(state / "locks" / key)
+    assert holder.acquire()
+    try:
+        ticks = {"n": 0}
+
+        def cancel():
+            ticks["n"] += 1
+            return ticks["n"] > 5
+        waiting = make_uploader(server, state, clock, "--skip-if-exists", "hash", cancel=cancel)
+        with pytest.raises(UploadCancelled):
+            waiting.upload_one(str(video), 0, 1)
+        assert server.sessions_started == 0
+    finally:
+        holder.release()

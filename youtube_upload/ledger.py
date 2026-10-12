@@ -49,6 +49,83 @@ def _file_lock(lock_path, timeout=10.0, stale_after=60.0, sleep=time.sleep, cloc
             pass
 
 
+class ProcessLock(object):
+    """Exclusive lock on a file, held by this process and dropped by the OS when it dies.
+
+    Unlike "create a lock file" schemes there is nothing stale to clean up after a crash or
+    ``kill -9``. Two ``ProcessLock`` objects on the same path exclude each other even inside one
+    process (``flock`` locks belong to the open file description, ``msvcrt.locking`` to the handle).
+    """
+
+    def __init__(self, path):
+        self.path = Path(path)
+        self._handle = None
+
+    def acquire(self):
+        """Try to take the lock without waiting. ``True`` if now held."""
+        if self._handle is not None:
+            return True
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(str(self.path), "a+b")
+        try:
+            if os.name == "nt":
+                import msvcrt
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            handle.close()
+            return False
+        self._handle = handle
+        return True
+
+    def release(self):
+        handle, self._handle = self._handle, None
+        if handle is None:
+            return
+        try:
+            if os.name == "nt":
+                import msvcrt
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass  # closing the handle releases it anyway
+        finally:
+            handle.close()
+
+
+def upload_lock_name(channel_id, sha256):
+    """File name of the in-flight lock for one (channel, file content) pair."""
+    return "{0}-{1}.lock".format(_SAFE.sub("_", channel_id), sha256[:32])
+
+
+def prune_old_locks(directory, max_age=7 * 24 * 3600, clock=time.time):
+    """Delete lock files nobody has touched for ``max_age`` seconds (never a held one)."""
+    directory = Path(directory)
+    try:
+        candidates = list(directory.glob("*.lock"))
+    except OSError:
+        return
+    for path in candidates:
+        try:
+            if clock() - path.stat().st_mtime < max_age:
+                continue
+            probe = ProcessLock(path)
+            if probe.acquire():          # unlinking a lock someone holds would break exclusion
+                try:
+                    probe.release()
+                    path.unlink()
+                except OSError:
+                    pass
+        except OSError:
+            continue
+
+
 class Ledger(object):
     """``sha256 -> {video_id, title, size, name, uploaded_at}`` for one channel."""
 

@@ -64,7 +64,7 @@ was revoked by Google).
    **Desktop app** → create → **Download JSON**.
 5. Save that file as `client_secrets.json` in one of these places (first match wins):
    * the accounts folder you pass with `--accounts-dir` (or choose in the GUI);
-   * the per-user folder shown by `youtube-upload --help` / [Where files are stored](#where-files-are-stored);
+   * the per-user folder (see [Where files are stored](#where-files-are-stored));
    * your home folder (`~/client_secrets.json`);
    * or anywhere, passing `--client-secrets PATH`.
 

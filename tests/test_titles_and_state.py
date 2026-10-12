@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -300,3 +301,58 @@ def test_replace_gives_up_eventually_and_cleans_up(tmp_path, monkeypatch):
     with pytest.raises(PermissionError):
         paths.write_private_text(target, "NEW")
     assert target.read_text() == "OLD" and [p.name for p in target.parent.iterdir()] == ["token.json"]
+
+
+# ------------------------------------------------------ process lock (released by the OS)
+
+def test_process_lock_excludes_a_second_holder_and_is_reusable(tmp_path):
+    from youtube_upload.ledger import ProcessLock
+    path = tmp_path / "locks" / "x.lock"
+    first, second = ProcessLock(path), ProcessLock(path)
+    assert first.acquire()
+    assert second.acquire() is False
+    first.release()
+    assert second.acquire() is True
+    second.release()
+    second.release()                      # releasing twice is harmless
+
+
+def test_process_lock_is_released_when_the_holder_is_killed(tmp_path):
+    """No stale-lock cleanup is needed: the OS drops the lock when the process dies."""
+    import signal
+    import time
+    from youtube_upload.ledger import ProcessLock
+    path = tmp_path / "locks" / "k.lock"
+    script = ("import sys, time; from youtube_upload.ledger import ProcessLock\n"
+              "l = ProcessLock(sys.argv[1]); assert l.acquire(); print('held', flush=True); time.sleep(60)\n")
+    env = dict(os.environ, PYTHONPATH=str(REPO))
+    proc = subprocess.Popen([sys.executable, "-c", script, str(path)], env=env, stdout=subprocess.PIPE)
+    try:
+        assert proc.stdout.readline().strip() == b"held"
+        probe = ProcessLock(path)
+        assert probe.acquire() is False             # held by a live process
+    finally:
+        proc.kill()                                 # SIGKILL / TerminateProcess: no cleanup runs
+        proc.wait(timeout=30)
+    deadline = time.time() + 10
+    acquired = False
+    while time.time() < deadline and not acquired:
+        acquired = ProcessLock(path).acquire()
+        time.sleep(0.05)
+    assert acquired
+
+
+def test_old_unlocked_lock_files_are_pruned_but_held_ones_are_kept(tmp_path):
+    from youtube_upload.ledger import ProcessLock, prune_old_locks
+    folder = tmp_path / "locks"
+    old, held, fresh = ProcessLock(folder / "old.lock"), ProcessLock(folder / "held.lock"), ProcessLock(folder / "fresh.lock")
+    for lock in (old, held, fresh):
+        assert lock.acquire()
+        lock.release()
+    assert held.acquire()
+    past = time.time() - 30 * 24 * 3600
+    for name in ("old.lock", "held.lock"):
+        os.utime(folder / name, (past, past))
+    prune_old_locks(folder, max_age=7 * 24 * 3600)
+    assert sorted(p.name for p in folder.iterdir()) == ["fresh.lock", "held.lock"]
+    held.release()
